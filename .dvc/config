@@ -1,4 +1,7 @@
 [core]
     remote = origin
 ['remote "origin"']
-    url = https://dagshub.com/thaibao3214/smart-parking-mlops.dvc
+    url = s3://dvc
+    endpointurl = https://dagshub.com/thaibao3214/smart-parking-mlops.s3
+    connect_timeout = 120
+    read_timeout = 300
