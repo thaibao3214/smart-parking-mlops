@@ -1,0 +1,7 @@
+data/
+resnet_model/
+mobilenet_model/
+cnn_model/
+__pycache__/
+*.jpg
+.env
