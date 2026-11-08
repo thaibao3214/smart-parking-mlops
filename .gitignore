@@ -1,7 +1,56 @@
-data/
-resnet_model/
-mobilenet_model/
-cnn_model/
+
+# =====================================
+# 1. DATASET - DVC MANAGES DATA
+# =====================================
+/data/
+
+# =====================================
+# 2. MODEL WEIGHTS
+# =====================================
+/resnet_model/
+/mobilenet_model/
+/cnn_model/
+*.pth
+*.pt
+*.onnx
+
+# =====================================
+# 3. PYTHON
+# =====================================
 __pycache__/
-*.jpg
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# =====================================
+# 4. RETRAINING OUTPUTS
+# =====================================
+/outputs/
+/checkpoints/
+
+# =====================================
+# 5. MLFLOW LOCAL FILES
+# =====================================
+mlruns/
+*.db
+
+# =====================================
+# 6. CREDENTIALS
+# =====================================
 .env
+.env.*
+!.env.example
+kaggle.json
+credentials.json
+token.json
+.dvc/config.local
+
+# =====================================
+# 7. LOCAL FILES
+# =====================================
+.vscode/
+*.log
+*.jpg
+*.jpeg
+*.png
