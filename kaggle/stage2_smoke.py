@@ -12,7 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torchvision.models import mobilenet_v3_small
 
-SOURCE = Path('/kaggle/input/datasets/nguynngthibo/smart-parking-stage2-smoke')
+SOURCE = Path('/kaggle/input/datasets/nguynngthibo/__STAGE2_DATASET_NAME__')
 WORKDIR = Path('/kaggle/working/stage2_crops')
 OUTPUT = Path('/kaggle/working')
 
