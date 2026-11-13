@@ -175,7 +175,7 @@ jobs:
 
           meta = {
               'id': os.environ['KERNEL_SLUG'],
-              'title': 'Smart Parking Stage Three Fine Tune Probe',
+              'title': 'smart-parking-stage-three-finetune-probe',
               'code_file': 'train.py',
               'language': 'python',
               'kernel_type': 'script',
