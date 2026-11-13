@@ -1,3 +1,4 @@
+
 name: Smart Parking - Stage 1 DVC Data Validation
 
 on:
@@ -14,8 +15,10 @@ jobs:
   validate-dvc:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     env:
       DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+
     steps:
       - name: Checkout exact Git commit
         uses: actions/checkout@v4
@@ -31,35 +34,93 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install 'dvc[s3]==3.67.1'
+
+          python -m pip install --upgrade pip
+          python -m pip install 'dvc[s3]==3.67.1' PyYAML
+
           dvc version
 
-      - name: Configure DagsHub DVC credentials (runner only)
+      - name: Configure DagsHub DVC credentials
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$DAGSHUB_TOKEN" || { echo 'ERROR: GitHub Actions secret DAGSHUB_TOKEN is missing'; exit 1; }
-          test -f data.dvc || { echo 'ERROR: data.dvc missing in this Git commit'; exit 1; }
-          test -f .dvc/config || { echo 'ERROR: .dvc/config missing'; exit 1; }
-          # DagsHub S3-compatible DVC remote accepts token as both key and secret.
-          # --local stores credentials in git-ignored .dvc/config.local.
-          dvc remote modify --local origin access_key_id "$DAGSHUB_TOKEN"
-          dvc remote modify --local origin secret_access_key "$DAGSHUB_TOKEN"
-          echo 'DVC_CREDENTIALS_CONFIGURED'
+
+          test -f data.dvc || {
+            echo "ERROR: data.dvc missing"
+            exit 1
+          }
+
+          test -f .dvc/config || {
+            echo "ERROR: .dvc/config missing"
+            exit 1
+          }
+
+          python - <<'PY'
+          import os
+          import subprocess
+
+          token = os.environ.get("DAGSHUB_TOKEN", "").strip()
+
+          if not token:
+              raise SystemExit(
+                  "ERROR: GitHub Actions secret DAGSHUB_TOKEN is missing"
+              )
+
+          if any(ord(c) < 33 or ord(c) == 127 for c in token):
+              raise SystemExit(
+                  "ERROR: DAGSHUB_TOKEN contains invalid control characters"
+              )
+
+          subprocess.run(
+              [
+                  "dvc",
+                  "remote",
+                  "modify",
+                  "--local",
+                  "origin",
+                  "access_key_id",
+                  token,
+              ],
+              check=True,
+          )
+
+          subprocess.run(
+              [
+                  "dvc",
+                  "remote",
+                  "modify",
+                  "--local",
+                  "origin",
+                  "secret_access_key",
+                  token,
+              ],
+              check=True,
+          )
+
+          print("DVC_CREDENTIALS_CONFIGURED")
+          PY
 
       - name: Pull versioned data directly from DagsHub
         shell: bash
         run: |
           set -euo pipefail
+
+          echo "Checking available disk space"
           df -h .
+
+          echo "Pulling DVC data from DagsHub"
+
           dvc pull data.dvc -r origin --jobs 4
-          echo 'DVC_PULL_PASS'
+
+          echo "DVC_PULL_PASS"
 
       - name: Validate COCO splits and prevent test leakage
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p outputs/dvc_stage1
+
           python - <<'PY'
           import hashlib
           import json
@@ -70,81 +131,240 @@ jobs:
           import yaml
 
           root = Path.cwd()
-          data_dvc = root / 'data.dvc'
-          pointer = yaml.safe_load(data_dvc.read_text(encoding='utf-8'))
-          outs = pointer.get('outs', [])
+          data_dvc = root / "data.dvc"
+
+          pointer = yaml.safe_load(
+              data_dvc.read_text(encoding="utf-8")
+          )
+
+          outs = pointer.get("outs", [])
+
           if not outs:
-              raise SystemExit('FAIL: data.dvc has no tracked outputs')
+              raise SystemExit(
+                  "FAIL: data.dvc has no tracked outputs"
+              )
 
           result = {
-              'timestamp_utc': datetime.now(timezone.utc).isoformat(),
-              'git_commit': os.environ['GITHUB_SHA'],
-              'github_run_id': os.environ['GITHUB_RUN_ID'],
-              'data_dvc_sha256': hashlib.sha256(data_dvc.read_bytes()).hexdigest(),
-              'dvc_outputs': [
-                  {'path': out.get('path'), 'md5': out.get('md5'), 'size': out.get('size'), 'nfiles': out.get('nfiles')}
-                  for out in outs
+              "timestamp_utc": datetime.now(
+                  timezone.utc
+              ).isoformat(),
+              "git_commit": os.environ["GITHUB_SHA"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "data_dvc_sha256": hashlib.sha256(
+                  data_dvc.read_bytes()
+              ).hexdigest(),
+              "dvc_outputs": [
+                  {
+                      "path": item.get("path"),
+                      "md5": item.get("md5"),
+                      "size": item.get("size"),
+                      "nfiles": item.get("nfiles"),
+                  }
+                  for item in outs
               ],
-              'splits': {},
-              'online': {},
-              'training_approved': False,
+              "splits": {},
+              "online": {},
+              "training_approved": False,
           }
 
-          for split in ('train', 'valid', 'test'):
-              base = root / 'data' / split
-              annotation_path = base / '_annotations.coco.json'
+          # Validate original COCO datasets
+          for split in ("train", "valid", "test"):
+              base = root / "data" / split
+
+              annotation_path = (
+                  base / "_annotations.coco.json"
+              )
+
               if not annotation_path.is_file():
-                  raise SystemExit(f'FAIL: missing {annotation_path}')
-              with annotation_path.open(encoding='utf-8') as f:
-                  coco = json.load(f)
-              images = coco.get('images', [])
-              annotations = coco.get('annotations', [])
-              if not images or not annotations:
-                  raise SystemExit(f'FAIL: empty COCO split {split}')
-              missing = sum(not (base / Path(item['file_name']).name).is_file() for item in images)
-              if missing:
-                  raise SystemExit(f'FAIL: {split} has {missing} missing image files')
-              image_ids = {item['id'] for item in images}
-              orphan = sum(item.get('image_id') not in image_ids for item in annotations)
-              if orphan:
-                  raise SystemExit(f'FAIL: {split} has {orphan} orphan annotations')
-              result['splits'][split] = {'images': len(images), 'annotations': len(annotations), 'missing_files': 0}
-              print(f'{split}: {len(images)} images, {len(annotations)} annotations, 0 missing files')
+                  raise SystemExit(
+                      f"FAIL: missing {annotation_path}"
+                  )
 
-          online_root = root / 'data' / 'confirmed_online' / 'frames'
-          label_files = sorted(online_root.glob('*/labels.json')) if online_root.exists() else []
-          count = 0
-          sources = set()
+              with annotation_path.open(
+                  encoding="utf-8"
+              ) as f:
+                  coco = json.load(f)
+
+              images = coco.get("images", [])
+              annotations = coco.get(
+                  "annotations", []
+              )
+
+              if not images or not annotations:
+                  raise SystemExit(
+                      f"FAIL: empty COCO split {split}"
+                  )
+
+              missing = sum(
+                  not (
+                      base /
+                      Path(image["file_name"]).name
+                  ).is_file()
+                  for image in images
+              )
+
+              if missing:
+                  raise SystemExit(
+                      f"FAIL: {split} has "
+                      f"{missing} missing images"
+                  )
+
+              image_ids = {
+                  image["id"]
+                  for image in images
+              }
+
+              orphan = sum(
+                  ann.get("image_id") not in image_ids
+                  for ann in annotations
+              )
+
+              if orphan:
+                  raise SystemExit(
+                      f"FAIL: {split} has "
+                      f"{orphan} orphan annotations"
+                  )
+
+              result["splits"][split] = {
+                  "images": len(images),
+                  "annotations": len(annotations),
+                  "missing_files": 0,
+              }
+
+              print(
+                  f"{split}: "
+                  f"{len(images)} images, "
+                  f"{len(annotations)} annotations, "
+                  f"0 missing files"
+              )
+
+          # Inspect online confirmed data
+          online_root = (
+              root / "data" /
+              "confirmed_online" / "frames"
+          )
+
+          label_files = (
+              sorted(online_root.glob("*/labels.json"))
+              if online_root.exists()
+              else []
+          )
+
+          crop_count = 0
           corrections = 0
-          for p in label_files:
-              data = json.loads(p.read_text(encoding='utf-8'))
-              sources.add(Path(data.get('source_image') or '').name)
-              for slot in data.get('slots', []):
-                  name = slot.get('crop_file', '')
-                  if not name or Path(name).name != name or not (p.parent / name).is_file():
-                      raise SystemExit(f'FAIL: invalid or missing online crop in {p}')
-                  count += 1
-                  corrections += int(slot.get('predicted_label') != slot.get('confirmed_label'))
-          test_coco = json.loads((root / 'data/test/_annotations.coco.json').read_text(encoding='utf-8'))
-          test_names = {Path(x['file_name']).name for x in test_coco['images']}
-          overlaps = len(sources & test_names)
-          result['online'] = {
-              'frames': len(label_files), 'crops': count,
-              'corrections': corrections,
-              'source_frames_overlapping_test': overlaps,
+          sources = set()
+
+          for label_path in label_files:
+              online_data = json.loads(
+                  label_path.read_text(
+                      encoding="utf-8"
+                  )
+              )
+
+              source_name = Path(
+                  online_data.get("source_image")
+                  or ""
+              ).name
+
+              if source_name:
+                  sources.add(source_name)
+
+              for slot in online_data.get(
+                  "slots", []
+              ):
+                  crop_name = slot.get(
+                      "crop_file", ""
+                  )
+
+                  if (
+                      not crop_name
+                      or Path(crop_name).name != crop_name
+                      or not (
+                          label_path.parent / crop_name
+                      ).is_file()
+                  ):
+                      raise SystemExit(
+                          "FAIL: invalid online crop "
+                          f"in {label_path}"
+                      )
+
+                  crop_count += 1
+
+                  if (
+                      slot.get("predicted_label")
+                      != slot.get("confirmed_label")
+                  ):
+                      corrections += 1
+
+          # Check overlap with original test images
+          test_path = (
+              root / "data" / "test" /
+              "_annotations.coco.json"
+          )
+
+          test_coco = json.loads(
+              test_path.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          test_names = {
+              Path(image["file_name"]).name
+              for image in test_coco["images"]
           }
-          result['training_approved'] = bool(count and overlaps == 0)
+
+          overlaps = len(
+              sources.intersection(test_names)
+          )
+
+          result["online"] = {
+              "frames": len(label_files),
+              "crops": crop_count,
+              "corrections": corrections,
+              "source_frames_overlapping_test": overlaps,
+          }
+
+          # Filename checks alone cannot establish
+          # that online training data is independent.
+          result["training_approved"] = False
+
           if overlaps:
-              print(f'SAFETY_GATE: {overlaps} online source frames overlap PKLot test; do not train on these crops')
+              print(
+                  "SAFETY_GATE: "
+                  f"{overlaps} online source frames "
+                  "overlap PKLot test"
+              )
+              print(
+                  "Do not train on these crops "
+                  "while using the same test split "
+                  "for unbiased evaluation"
+              )
           else:
-              print('SAFETY_GATE: no filename overlap with PKLot test (additional provenance checks still needed)')
-          out = root / 'outputs/dvc_stage1/manifest.json'
-          out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding='utf-8')
-          print('DVC_STAGE1_PASS')
-          print('MANIFEST:', out)
+              print(
+                  "SAFETY_GATE: no filename overlap "
+                  "detected; provenance review "
+                  "is still required"
+              )
+
+          output_path = (
+              root / "outputs" /
+              "dvc_stage1" / "manifest.json"
+          )
+
+          output_path.write_text(
+              json.dumps(
+                  result,
+                  indent=2,
+                  ensure_ascii=False,
+              ),
+              encoding="utf-8",
+          )
+
+          print("DVC_STAGE1_PASS")
+          print("MANIFEST:", output_path)
           PY
 
-      - name: Upload validation manifest (no images or secrets)
+      - name: Upload validation manifest
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
