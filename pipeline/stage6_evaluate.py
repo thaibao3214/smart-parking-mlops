@@ -64,19 +64,43 @@ def checked_path(root, name):
 
 
 def get_online_exclusions(path):
-    """Fail closed if the project's online simulation manifest is absent."""
+    """Accept the two known project manifest layouts; never silently omit exclusions."""
     path = Path(path)
     if not path.is_file():
-        raise FileNotFoundError(f'Missing online manifest {path}; refusing to evaluate test frames without exclusion')
+        raise FileNotFoundError(f'Missing online manifest: {path}')
     doc = json.loads(path.read_text(encoding='utf-8'))
-    if doc.get('source_split') != 'data/test':
-        raise ValueError('Online manifest source_split must be data/test')
-    names = doc.get('image_files')
-    if not isinstance(names, list) or not names:
-        raise ValueError('Online manifest image_files must be nonempty')
-    excluded = {Path(name).name for name in names}
+    if not isinstance(doc, dict):
+        raise ValueError('Online manifest must be an object')
+
+    source_split = doc.get('source_split')
+    if source_split is not None and source_split != 'data/test':
+        raise ValueError(f'Unexpected online source_split: {source_split!r}')
+
+    if 'image_files' in doc:
+        items = doc['image_files']
+    elif 'images' in doc:
+        items = doc['images']
+    else:
+        raise ValueError('Online manifest needs image_files or images')
+
+    if not isinstance(items, list) or not items:
+        raise ValueError('Online manifest image list must be nonempty')
+
+    names = []
+    for item in items:
+        name = item.get('file_name') if isinstance(item, dict) else item
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Invalid online source image filename')
+        parsed = Path(name)
+        if parsed.is_absolute() or '..' in parsed.parts or parsed.name != name:
+            raise ValueError(f'Unsafe online source filename: {name!r}')
+        names.append(name)
+
+    excluded = set(names)
     if len(excluded) != len(names):
         raise ValueError('Duplicate online source names')
+    if len(excluded) != 20:
+        raise ValueError(f'Expected 20 online source frames, found {len(excluded)}')
     print(f'STAGE6_ONLINE_SOURCE_EXCLUSION_PASS: {len(excluded)} frames', flush=True)
     return excluded
 
@@ -85,6 +109,10 @@ def read_split(test_dir, excluded, per_class, seed):
     coco_path = test_dir / '_annotations.coco.json'
     coco = json.loads(coco_path.read_text(encoding='utf-8'))
     images = {im['id']: im for im in coco['images']}
+    available_names = {Path(im['file_name']).name for im in coco['images']}
+    missing_exclusions = excluded - available_names
+    if missing_exclusions:
+        raise ValueError(f'Online sources absent from test COCO: {sorted(missing_exclusions)[:5]}')
     choices = {0: [], 1: []}
     skipped = 0
     for ann in coco['annotations']:
