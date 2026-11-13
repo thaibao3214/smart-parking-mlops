@@ -1,3 +1,4 @@
+
 name: Smart Parking - Stage 2 GPU Training Smoke
 
 on:
@@ -14,6 +15,7 @@ jobs:
   stage2:
     runs-on: ubuntu-latest
     timeout-minutes: 65
+
     env:
       DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
@@ -26,168 +28,424 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install DVC and Kaggle CLI
+      - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install 'dvc[s3]==3.67.1' 'kaggle==2.2.5' 'six>=1.16' Pillow
-          python -c 'import dvc, kaggle, six; print("STAGE2_DEPS_PASS")'
 
-      - name: Retrieve exactly versioned PKLot from DagsHub
+          python -m pip install \
+            'dvc[s3]==3.67.1' \
+            'kaggle==2.2.5' \
+            'six>=1.16' \
+            Pillow
+
+          echo "STAGE2_DEPS_PASS"
+
+      - name: Configure DagsHub and pull DVC data
         shell: bash
         run: |
           set -euo pipefail
+
           python - <<'PY'
-          import os, subprocess
-          token = os.environ.get('DAGSHUB_TOKEN', '').strip()
-          if not token or any(ord(c) < 33 or ord(c) == 127 for c in token):
-              raise SystemExit('Missing/invalid DAGSHUB_TOKEN')
-          for key in ('access_key_id', 'secret_access_key'):
-              subprocess.run(['dvc', 'remote', 'modify', '--local', 'origin', key, token], check=True)
-          print('STAGE2_DVC_AUTH_PASS')
-          PY
-          df -h .
-          dvc pull data.dvc -r origin --jobs 4
-          echo 'STAGE2_DVC_PULL_PASS'
+          import os
+          import subprocess
 
-      - name: Build safe tiny train and validation samples
+          token = os.environ.get(
+              "DAGSHUB_TOKEN", ""
+          ).strip()
+
+          if not token:
+              raise SystemExit(
+                  "Missing DAGSHUB_TOKEN"
+              )
+
+          if any(
+              ord(c) < 33 or ord(c) == 127
+              for c in token
+          ):
+              raise SystemExit(
+                  "Invalid DAGSHUB_TOKEN characters"
+              )
+
+          for key in (
+              "access_key_id",
+              "secret_access_key"
+          ):
+              subprocess.run(
+                  [
+                      "dvc", "remote",
+                      "modify", "--local",
+                      "origin", key, token
+                  ],
+                  check=True
+              )
+
+          print("STAGE2_DVC_AUTH_PASS")
+          PY
+
+          dvc pull data.dvc -r origin --jobs 4
+
+          echo "STAGE2_DVC_PULL_PASS"
+
+      - name: Prepare real PKLot train and valid samples
         shell: bash
         run: |
           set -euo pipefail
+
           python pipeline/prepare_stage2.py
+
           python - <<'PY'
           import json
           from pathlib import Path
-          d = json.loads(Path('.stage2_dataset/manifest.json').read_text())
-          assert d['online_crops_included'] == 0 and d['test_crops_included'] == 0
-          print('STAGE2_NO_TEST_LEAKAGE_PASS')
+
+          root = Path(".stage2_dataset")
+          manifest = json.loads(
+              (root / "manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          assert len(manifest["train"]) == 128
+          assert len(manifest["valid"]) == 64
+
+          assert manifest["online_crops_included"] == 0
+          assert manifest["test_crops_included"] == 0
+
+          for split in ("train", "valid"):
+              for item in manifest[split]:
+                  file = root / item["file"]
+                  assert file.is_file(), (
+                      f"Missing crop: {file}"
+                  )
+
+          print("STAGE2_PREP_PASS")
+          print("STAGE2_NO_TEST_LEAKAGE_PASS")
           PY
 
-      - name: Create or update separate PRIVATE Kaggle dataset
+      - name: Package images into one ZIP archive
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$KAGGLE_API_TOKEN" || { echo 'Missing KAGGLE_API_TOKEN'; exit 1; }
-          if kaggle datasets status "$DATASET_SLUG" >/dev/null 2>&1; then
-            kaggle datasets version -p .stage2_dataset -m "Stage2 smoke $GITHUB_RUN_ID"
+
+          python - <<'PY'
+          import json
+          import shutil
+          import zipfile
+          from pathlib import Path
+
+          root = Path(".stage2_dataset")
+
+          manifest = json.loads(
+              (root / "manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          archive = root / "crops.zip"
+
+          with zipfile.ZipFile(
+              archive,
+              "w",
+              compression=zipfile.ZIP_DEFLATED
+          ) as z:
+              for split in ("train", "valid"):
+                  for record in manifest[split]:
+                      relative = Path(record["file"])
+                      source = root / relative
+
+                      if not source.is_file():
+                          raise FileNotFoundError(source)
+
+                      z.write(
+                          source,
+                          arcname=relative.as_posix()
+                      )
+
+          with zipfile.ZipFile(archive) as z:
+              names = set(z.namelist())
+
+              assert len(names) == 192, (
+                  f"Expected 192 images, got {len(names)}"
+              )
+
+              assert z.testzip() is None, (
+                  "ZIP archive is corrupted"
+              )
+
+              for split in ("train", "valid"):
+                  for record in manifest[split]:
+                      assert record["file"] in names
+
+          print("STAGE2_ZIP_PASS")
+          print("ZIP_SIZE_BYTES:", archive.stat().st_size)
+          print("ZIP_IMAGES:", len(names))
+
+          # Only remove temporary staging copies.
+          # Original DVC data/ is not modified.
+          shutil.rmtree(root / "train")
+          shutil.rmtree(root / "valid")
+          PY
+
+          ls -lh .stage2_dataset
+
+      - name: Upload private Kaggle dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -n "$KAGGLE_API_TOKEN" || {
+            echo "Missing KAGGLE_API_TOKEN"
+            exit 1
+          }
+
+          # Try updating the Stage 2 dataset first.
+          # It may already exist from the earlier run.
+          if kaggle datasets version \
+            -p .stage2_dataset \
+            -m "Stage 2 smoke $GITHUB_RUN_ID"; then
+
+            echo "STAGE2_DATASET_VERSION_SUBMITTED"
+
           else
-            kaggle datasets create -p .stage2_dataset
+            echo "Version failed; attempting initial creation"
+
+            kaggle datasets create \
+              -p .stage2_dataset
+
+            echo "STAGE2_DATASET_CREATE_SUBMITTED"
           fi
-          for i in $(seq 1 48); do
-            status=$(kaggle datasets status "$DATASET_SLUG" 2>&1) || { echo "$status"; exit 1; }
-            echo "Dataset status: $status"
-            if [[ "$status" == *ready* ]]; then break; fi
-            if [[ "$i" -eq 48 ]]; then echo 'Dataset readiness timeout'; exit 1; fi
+
+          # Kaggle dataset creation/versioning is asynchronous.
+          # Retry temporary API errors instead of failing
+          # immediately on the first HTTP 403.
+          ready=0
+
+          for i in $(seq 1 60); do
+            if status=$(kaggle datasets status \
+              "$DATASET_SLUG" 2>&1); then
+
+              echo "Dataset status [$i]: $status"
+
+              if [[ "$status" == *ready* ]]; then
+                ready=1
+                break
+              fi
+
+              if [[ "$status" == *error* || \
+                    "$status" == *failed* ]]; then
+                echo "Dataset processing failed"
+                exit 1
+              fi
+
+            else
+              echo "Dataset status not available yet ($i)"
+            fi
+
             sleep 10
           done
 
-      - name: Prepare Kaggle GPU script and metadata
+          if [[ "$ready" -ne 1 ]]; then
+            echo "Dataset did not become ready"
+            exit 1
+          fi
+
+          echo "STAGE2_DATASET_READY_PASS"
+
+      - name: Prepare Kaggle GPU job
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p .stage2_kernel stage2_logs
-          cp kaggle/stage2_smoke.py .stage2_kernel/train.py
-          python -m py_compile .stage2_kernel/train.py
+
+          cp kaggle/stage2_smoke.py \
+            .stage2_kernel/train.py
+
+          python -m py_compile \
+            .stage2_kernel/train.py
+
           python - <<'PY'
-          import json, os
+          import json
+          import os
           from pathlib import Path
-          meta = {
-              'id': os.environ['KERNEL_SLUG'],
-              'title': 'Smart Parking Stage Two Training Probe',
-              'code_file': 'train.py',
-              'language': 'python',
-              'kernel_type': 'script',
-              'is_private': True,
-              'enable_gpu': True,
-              'enable_internet': False,
-              'machine_shape': 'NvidiaTeslaT4',
-              'dataset_sources': [os.environ['DATASET_SLUG']],
-              'kernel_sources': [], 'competition_sources': [], 'model_sources': [],
+
+          metadata = {
+              "id": os.environ["KERNEL_SLUG"],
+              "title": "Smart Parking Stage Two Training Probe",
+              "code_file": "train.py",
+              "language": "python",
+              "kernel_type": "script",
+              "is_private": True,
+              "enable_gpu": True,
+              "enable_internet": False,
+              "machine_shape": "NvidiaTeslaT4",
+              "dataset_sources": [
+                  os.environ["DATASET_SLUG"]
+              ],
+              "kernel_sources": [],
+              "competition_sources": [],
+              "model_sources": []
           }
-          Path('.stage2_kernel/kernel-metadata.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
-          print('STAGE2_KERNEL_METADATA_PASS')
+
+          path = Path(
+              ".stage2_kernel/kernel-metadata.json"
+          )
+
+          path.write_text(
+              json.dumps(metadata, indent=2),
+              encoding="utf-8"
+          )
+
+          print("STAGE2_KERNEL_METADATA_PASS")
           PY
 
       - name: Start Kaggle GPU training
         shell: bash
         run: |
           set -euo pipefail
-          kaggle kernels push -p .stage2_kernel
-          echo 'STAGE2_KAGGLE_PUSH_PASS'
 
-      - name: Poll Kaggle status
+          kaggle kernels push -p .stage2_kernel
+
+          echo "STAGE2_KAGGLE_PUSH_PASS"
+
+      - name: Wait for Kaggle GPU
         shell: bash
         run: |
           set -uo pipefail
+
+          mkdir -p stage2_logs
+
           for i in $(seq 1 150); do
-            status=$(kaggle kernels status "$KERNEL_SLUG" 2>&1)
+            status=$(kaggle kernels status \
+              "$KERNEL_SLUG" 2>&1)
+
             code=$?
+
             echo "[$i] $status"
+
             if [[ "$code" -ne 0 ]]; then
-              echo 'STATUS_API_ERROR' > stage2_logs/status.txt
+              echo "STATUS_API_ERROR" \
+                > stage2_logs/status.txt
               exit 0
             fi
+
             if [[ "$status" == *COMPLETE* ]]; then
-              echo 'COMPLETE' > stage2_logs/status.txt
+              echo "COMPLETE" \
+                > stage2_logs/status.txt
               exit 0
             fi
-            if [[ "$status" == *ERROR* || "$status" == *FAILED* || "$status" == *CANCEL* ]]; then
-              echo 'ERROR' > stage2_logs/status.txt
+
+            if [[ "$status" == *ERROR* || \
+                  "$status" == *FAILED* || \
+                  "$status" == *CANCEL* ]]; then
+              echo "ERROR" \
+                > stage2_logs/status.txt
               exit 0
             fi
+
             sleep 12
           done
-          echo 'TIMEOUT' > stage2_logs/status.txt
+
+          echo "TIMEOUT" > stage2_logs/status.txt
 
       - name: Always collect Kaggle logs and outputs
         if: ${{ always() }}
         shell: bash
         run: |
           mkdir -p stage2_logs
-          if command -v kaggle >/dev/null 2>&1 && [[ -n "${KAGGLE_API_TOKEN:-}" ]]; then
-            kaggle kernels output "$KERNEL_SLUG" -p stage2_logs || echo 'KAGGLE_LOG_DOWNLOAD_FAILED'
+
+          if command -v kaggle >/dev/null 2>&1 \
+            && [[ -n "${KAGGLE_API_TOKEN:-}" ]]; then
+
+            kaggle kernels output \
+              "$KERNEL_SLUG" \
+              -p stage2_logs \
+              || echo "KAGGLE_LOG_DOWNLOAD_FAILED"
           fi
+
           python - <<'PY'
           import json
           from pathlib import Path
-          for p in Path('stage2_logs').glob('*.log'):
-              raw = p.read_text(encoding='utf-8', errors='replace')
+
+          for path in Path("stage2_logs").glob("*.log"):
+              raw = path.read_text(
+                  encoding="utf-8",
+                  errors="replace"
+              )
+
               try:
                   records = json.loads(raw)
-                  raw = ''.join(rec.get('data', '') for rec in records)
+                  raw = "".join(
+                      item.get("data", "")
+                      for item in records
+                  )
               except (ValueError, TypeError):
                   pass
-              print('==== KAGGLE LOG ====')
-              print(raw[-12000:])
+
+              print("==== KAGGLE LOG ====")
+              print(raw[-16000:])
           PY
 
-      - name: Verify an actual GPU training step completed
+      - name: Verify GPU training result
         shell: bash
         run: |
           set -euo pipefail
+
           status=$(cat stage2_logs/status.txt)
+
           echo "FINAL_KERNEL_STATUS: $status"
-          test "$status" = 'COMPLETE' || { echo 'STAGE2_GPU_TRAIN_FAIL'; exit 1; }
+
+          if [[ "$status" != "COMPLETE" ]]; then
+            echo "STAGE2_GPU_TRAIN_FAIL"
+            exit 1
+          fi
+
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
-          reports = list(Path('stage2_logs').rglob('stage2_report.json'))
-          assert reports, 'Missing GPU training report'
-          report = json.loads(reports[0].read_text(encoding='utf-8'))
-          assert report['stage'] == 'stage2-smoke'
-          assert report['train_samples'] == 128 and report['valid_samples'] == 64
-          assert report['production_approved'] is False
-          print('STAGE2_END_TO_END_PASS')
-          print('GPU:', report['gpu'])
-          print('Validation accuracy (smoke only):', report['valid_accuracy'])
+
+          reports = list(
+              Path("stage2_logs").rglob(
+                  "stage2_report.json"
+              )
+          )
+
+          assert reports, "Missing GPU training report"
+
+          report = json.loads(
+              reports[0].read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          assert report["stage"] == "stage2-smoke"
+          assert report["train_samples"] == 128
+          assert report["valid_samples"] == 64
+          assert report["production_approved"] is False
+
+          assert report["github_run_id"] == (
+              os.environ["GITHUB_RUN_ID"]
+          ), "Kaggle used stale dataset version"
+
+          assert report["gpu"], "GPU name missing"
+
+          print("STAGE2_GPU_TRAIN_PASS")
+          print("STAGE2_END_TO_END_PASS")
+
+          print("GPU:", report["gpu"])
+          print(
+              "Validation accuracy:",
+              report["valid_accuracy"]
+          )
           PY
 
-      - name: Upload Stage 2 diagnostic artifact
+      - name: Upload Stage 2 diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
