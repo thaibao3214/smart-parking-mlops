@@ -1,0 +1,5 @@
+outs:
+- md5: 75bc20f96f18e5e1b64908e3e202795c
+  size: 6217527
+  hash: md5
+  path: mobilenet_v3_small_best.pth

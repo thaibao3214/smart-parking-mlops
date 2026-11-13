@@ -5,14 +5,21 @@
 /data/
 
 # =====================================
-# 2. MODEL WEIGHTS
+# 2. MODEL WEIGHTS - DVC MANAGES MODELS
 # =====================================
-/resnet_model/
-/mobilenet_model/
-/cnn_model/
+
+# Ignore model weights, but allow DVC pointers
+/resnet_model/*.pth
+/mobilenet_model/*.pth
+/cnn_model/*.pth
+
+# Other model formats
 *.pth
 *.pt
 *.onnx
+
+# Keep DVC pointer files
+!*.dvc
 
 # =====================================
 # 3. PYTHON
@@ -54,3 +61,14 @@ token.json
 *.jpg
 *.jpeg
 *.png
+
+# =====================================
+# 8. TEMPORARY KAGGLE DATA
+# =====================================
+/kaggle_dataset/
+/.stage2_dataset/
+/.stage2_kernel/
+/.stage3_dataset/
+/.stage3_kernel/
+/stage2_logs/
+/stage3_logs/
