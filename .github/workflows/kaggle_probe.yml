@@ -86,6 +86,7 @@ jobs:
           root = Path("/kaggle/input/smart-parking-mlops-training")
           print("INPUT_EXISTS:", root.exists(), flush=True)
           print("INPUT_FILES:", [str(p) for p in root.glob("*")][:30], flush=True)
+          print("ALL_INPUT_PATHS:", [str(p) for p in Path('/kaggle/input').rglob('github_actions_probe.txt')][:20], flush=True)
           try:
               assert root.exists(), "Private Dataset was not attached"
               probe = root / "github_actions_probe.txt"
@@ -127,11 +128,37 @@ jobs:
             sleep 8
           done
 
+      - name: Save Kaggle notebook and verify attached input metadata
+        id: presave
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p probe_output/pulled_kernel
+          # Save metadata separately before requesting GPU execution.
+          kaggle kernels push -p .probe_kernel --no-run
+          sleep 12
+          # Fetch the notebook definition stored on Kaggle, not just the local JSON.
+          kaggle kernels pull "$KERNEL_SLUG" -p probe_output/pulled_kernel -m
+          python - <<'PY_CHECK'
+          import json
+          from pathlib import Path
+          path = Path('probe_output/pulled_kernel/kernel-metadata.json')
+          assert path.is_file(), 'Kaggle did not return saved kernel metadata'
+          metadata = json.loads(path.read_text(encoding='utf-8'))
+          sources = metadata.get('dataset_sources', [])
+          print('KAGGLE_STORED_DATASET_SOURCES:', sources)
+          expected = 'nguynngthibo/smart-parking-mlops-training'
+          if expected not in sources:
+              raise SystemExit('KAGGLE_DROPPED_DATASET_ATTACHMENT: saved notebook metadata has no expected dataset')
+          print('KAGGLE_STORED_ATTACHMENT_PASS')
+          PY_CHECK
+
       - name: Launch Kaggle GPU
         id: launch
         shell: bash
         run: |
           set -euo pipefail
+          # Re-specify the same metadata on every push.
           kaggle kernels push -p .probe_kernel
 
       - name: Poll Kaggle status without losing the traceback
@@ -204,6 +231,7 @@ jobs:
             probe_output/
             .probe_kernel/train.py
             .probe_kernel/kernel-metadata.json
+            probe_output/pulled_kernel/
           if-no-files-found: warn
           retention-days: 7
 
