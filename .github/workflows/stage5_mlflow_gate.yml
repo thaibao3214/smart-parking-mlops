@@ -1,0 +1,65 @@
+name: Smart Parking - Stage 5 MLflow Evaluation Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  evaluate-and-track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+      DAGSHUB_USERNAME: thaibao3214
+      DAGSHUB_REPO: smart-parking-mlops
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install MLflow
+        run: python -m pip install 'mlflow==2.22.2'
+
+      - name: Download original Stage 3 and Stage 4 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input_stage3 input_stage4
+          gh run download 43458044027 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name smart-parking-stage3-43458044027-1 \
+            --dir input_stage3
+          gh run download 43479352874 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name smart-parking-stage4-43479352874-1 \
+            --dir input_stage4
+          test -s input_stage3/stage3_logs/stage3_report.json
+          test -s input_stage4/stage4_logs/stage4_report.json
+          echo 'STAGE5_ARTIFACT_DOWNLOAD_PASS'
+
+      - name: Audit, evaluate and log 3 models to DagsHub MLflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python pipeline/stage5_evaluate.py \
+            --stage3 input_stage3 \
+            --stage4 input_stage4 \
+            --output stage5_output
+          cat stage5_output/stage5_summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evaluation report (no production change)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-parking-stage5-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage5_output/
+          if-no-files-found: warn
+          retention-days: 30
