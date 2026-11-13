@@ -18,174 +18,212 @@ jobs:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       DATASET_SLUG: nguynngthibo/smart-parking-mlops-training
       KERNEL_SLUG: nguynngthibo/smart-parking-github-actions-probe
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Kaggle CLI and dependencies
+      - name: Install CLI and verify credentials
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install 'six>=1.16.0' 'kaggle==2.2.5'
+          set -euo pipefail
+          python -m pip install 'six>=1.16' 'kaggle==2.2.5'
           python -c "import six, kaggle; print('KAGGLE_IMPORT_PASS')"
-          kaggle --version
-
-      - name: Verify Kaggle credentials
-        run: |
           test -n "$KAGGLE_API_TOKEN" || { echo 'Missing KAGGLE_API_TOKEN'; exit 1; }
           kaggle datasets status "$DATASET_SLUG"
 
-      - name: Prepare tiny test dataset version
+      - name: Prepare dataset and checked probe script
+        shell: bash
         run: |
-          mkdir -p .probe_dataset
+          set -euo pipefail
+          mkdir -p .probe_dataset .probe_kernel
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          p = Path('.probe_dataset')
-          meta = {
-              'title': 'Smart Parking MLOps Training',
-              'id': os.environ['DATASET_SLUG'],
-              'licenses': [{'name': 'unknown'}],
-          }
-          (p / 'dataset-metadata.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
-          (p / 'test.txt').write_text('test connection\n', encoding='utf-8')
-          (p / 'github_actions_probe.txt').write_text(
-              f"GitHub Actions run {os.environ['GITHUB_RUN_ID']}\n", encoding='utf-8'
-          )
-          PY
+          data = Path('.probe_dataset')
+          data.joinpath('dataset-metadata.json').write_text(
+              json.dumps({
+                  'title': 'Smart Parking MLOps Training',
+                  'id': os.environ['DATASET_SLUG'],
+                  'licenses': [{'name': 'unknown'}]
+              }, indent=2), encoding='utf-8')
+          data.joinpath('test.txt').write_text('test connection\n', encoding='utf-8')
+          data.joinpath('github_actions_probe.txt').write_text(
+              'GitHub Actions run ' + os.environ['GITHUB_RUN_ID'] + '\n',
+              encoding='utf-8')
 
-      - name: Update Kaggle private dataset
-        run: kaggle datasets version -p .probe_dataset -m "GitHub Actions probe $GITHUB_RUN_ID"
+          kern = Path('.probe_kernel')
+          kern.joinpath('kernel-metadata.json').write_text(
+              json.dumps({
+                  'id': os.environ['KERNEL_SLUG'],
+                  'title': 'Smart Parking GitHub Actions Probe',
+                  'code_file': 'train.py',
+                  'language': 'python',
+                  'kernel_type': 'script',
+                  'is_private': True,
+                  'enable_gpu': True,
+                  'enable_internet': False,
+                  'machine_shape': 'NvidiaTeslaT4',
+                  'dataset_sources': [os.environ['DATASET_SLUG']],
+                  'kernel_sources': [],
+                  'competition_sources': [],
+                  'model_sources': []
+              }, indent=2), encoding='utf-8')
 
-      - name: Wait for dataset version
-        run: |
-          for i in $(seq 1 36); do
-            status=$(kaggle datasets status "$DATASET_SLUG" 2>&1) || { echo "$status"; exit 1; }
-            echo "Dataset status: $status"
-            if [[ "$status" == *ready* ]]; then exit 0; fi
-            sleep 10
-          done
-          echo 'Dataset version timeout'
-          exit 1
-
-      - name: Prepare Kaggle probe notebook
-        run: |
-          mkdir -p .probe_kernel
-          python - <<'PY'
-          import json
+          script = '''from pathlib import Path
           import os
-          from pathlib import Path
+          import sys
+          import traceback
 
-          p = Path('.probe_kernel')
-          metadata = {
-              'id': os.environ['KERNEL_SLUG'],
-              'title': 'Smart Parking GitHub Actions Probe',
-              'code_file': 'train.py',
-              'language': 'python',
-              'kernel_type': 'script',
-              'is_private': True,
-              'enable_gpu': True,
-              'enable_internet': False,
-              'machine_shape': 'NvidiaTeslaT4',
-              'dataset_sources': [os.environ['DATASET_SLUG']],
-              'kernel_sources': [],
-              'competition_sources': [],
-              'model_sources': [],
-          }
-          (p / 'kernel-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
-
-          # Use explicit lines to prevent accidental leading indentation in the Kaggle script.
-          lines = [
-              'from pathlib import Path',
-              'import torch',
-              '',
-              'root = Path("/kaggle/input/smart-parking-mlops-training")',
-              'probe = root / "github_actions_probe.txt"',
-              'assert probe.is_file(), f"Probe file missing: {probe}"',
-              'content = probe.read_text(encoding="utf-8").strip()',
-              'assert content.startswith("GitHub Actions run "), content',
-              'assert torch.cuda.is_available(), "GPU unavailable"',
-              'print("GITHUB_ACTIONS_DATASET_GPU_PASS")',
-              'print("PROBE_CONTENT:", content)',
-              'print("GPU:", torch.cuda.get_device_name(0))',
-          ]
-          script = '\n'.join(lines) + '\n'
-          compile(script, 'train.py', 'exec')  # Validate before pushing to Kaggle.
-          (p / 'train.py').write_text(script, encoding='utf-8')
+          print("PROBE_START", flush=True)
+          print("PYTHON:", sys.version, flush=True)
+          root = Path("/kaggle/input/smart-parking-mlops-training")
+          print("INPUT_EXISTS:", root.exists(), flush=True)
+          print("INPUT_FILES:", [str(p) for p in root.glob("*")][:30], flush=True)
+          try:
+              assert root.exists(), "Private Dataset was not attached"
+              probe = root / "github_actions_probe.txt"
+              assert probe.is_file(), "Missing github_actions_probe.txt in attached dataset"
+              content = probe.read_text(encoding="utf-8").strip()
+              print("PROBE_CONTENT:", content, flush=True)
+              assert content.startswith("GitHub Actions run "), content
+              import torch
+              print("TORCH_VERSION:", torch.__version__, flush=True)
+              print("CUDA_AVAILABLE:", torch.cuda.is_available(), flush=True)
+              assert torch.cuda.is_available(), "CUDA not available"
+              a = torch.tensor([1, 2, 3], device="cuda")
+              assert int(a.sum().item()) == 6
+              print("GPU:", torch.cuda.get_device_name(0), flush=True)
+              print("GITHUB_ACTIONS_DATASET_GPU_PASS", flush=True)
+          except Exception:
+              traceback.print_exc()
+              print("KAGGLE_PROBE_FAILED", flush=True)
+              raise
+          '''
+          # Strip exactly the YAML block indentation, not the Python indentation.
+          import textwrap
+          script = textwrap.dedent(script)
+          compile(script, str(kern / 'train.py'), 'exec')
+          kern.joinpath('train.py').write_text(script, encoding='utf-8')
           print('KAGGLE_SCRIPT_SYNTAX_PASS')
           PY
 
-      - name: Start Kaggle GPU via CLI
-        id: launch
-        run: kaggle kernels push -p .probe_kernel
-
-      - name: Wait for Kaggle run to finish
-        id: wait_kernel
+      - name: Upload test dataset version
+        shell: bash
         run: |
-          for i in $(seq 1 72); do
-            status=$(kaggle kernels status "$KERNEL_SLUG" 2>&1) || { echo "$status"; exit 1; }
-            echo "Kernel status: $status"
-            if [[ "$status" == *COMPLETE* ]]; then exit 0; fi
+          set -euo pipefail
+          kaggle datasets version -p .probe_dataset -m "GitHub Actions probe run $GITHUB_RUN_ID"
+          for i in $(seq 1 45); do
+            result=$(kaggle datasets status "$DATASET_SLUG" 2>&1) || { echo "$result"; exit 1; }
+            echo "Dataset: $result"
+            if [[ "$result" == *ready* ]]; then break; fi
+            if [[ "$i" -eq 45 ]]; then echo 'Dataset version timed out'; exit 1; fi
+            sleep 8
+          done
+
+      - name: Launch Kaggle GPU
+        id: launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          kaggle kernels push -p .probe_kernel
+
+      - name: Poll Kaggle status without losing the traceback
+        id: poll
+        if: ${{ steps.launch.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p probe_output
+          for i in $(seq 1 75); do
+            status=$(kaggle kernels status "$KERNEL_SLUG" 2>&1)
+            code=$?
+            echo "Status [$i]: $status"
+            if [[ "$code" -ne 0 ]]; then
+              echo "STATUS_API_ERROR" | tee probe_output/status.txt
+              exit 0
+            fi
+            if [[ "$status" == *COMPLETE* ]]; then
+              echo "COMPLETE" > probe_output/status.txt
+              exit 0
+            fi
             if [[ "$status" == *ERROR* || "$status" == *CANCEL* || "$status" == *FAILED* ]]; then
-              echo 'Kernel failed; next step will attempt to download its execution log.'
-              exit 1
+              echo "ERROR" > probe_output/status.txt
+              echo 'Notebook failed; collecting logs next.'
+              exit 0
             fi
             sleep 10
           done
-          echo 'Kernel execution timeout'
-          exit 1
+          echo "TIMEOUT" > probe_output/status.txt
+          echo 'Polling timed out; collecting available logs next.'
 
-      - name: Download and print Kaggle execution log (even on failure)
+      - name: Always collect Kaggle logs
         if: ${{ always() && steps.launch.outcome == 'success' }}
+        shell: bash
         run: |
           mkdir -p probe_output
-          if kaggle kernels output "$KERNEL_SLUG" -p probe_output; then
-            python - <<'PY'
-          import json
-          from pathlib import Path
-
-          logs = list(Path('probe_output').glob('*.log'))
-          if not logs:
-              print('No Kaggle log file found')
-          for log in logs:
-              raw = log.read_text(encoding='utf-8', errors='replace')
-              try:
-                  records = json.loads(raw)
-                  output = ''.join(str(item.get('data', '')) for item in records)
-              except (ValueError, TypeError):
-                  output = raw
-              print(f'=== {log} ===')
-              print(output[-15000:])
-          PY
-          else
-            echo 'Could not download Kaggle execution log; inspect Kaggle notebook Output tab.'
-          fi
-
-      - name: Verify end-to-end result
-        if: ${{ success() }}
-        run: |
+          for attempt in 1 2 3; do
+            if kaggle kernels output "$KERNEL_SLUG" -p probe_output; then
+              break
+            fi
+            echo "Log download attempt $attempt failed"
+            sleep 8
+          done
           python - <<'PY'
           import json
+          from pathlib import Path
+          files = list(Path('probe_output').glob('*.log'))
+          if not files:
+              print('KAGGLE_LOG_UNAVAILABLE: No .log was downloaded')
+          for path in files:
+              data = path.read_text(encoding='utf-8', errors='replace')
+              try:
+                  records = json.loads(data)
+                  if isinstance(records, list):
+                      data = ''.join(str(x.get('data', '')) for x in records)
+              except (ValueError, TypeError):
+                  pass
+              Path('probe_output/kernel_stdout.txt').write_text(data, encoding='utf-8')
+              print('==== KAGGLE EXECUTION LOG ====')
+              print(data[-25000:])
+              print('==== END LOG ====')
+          PY
+
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaggle-probe-diagnostics-${{ github.run_id }}
+          path: |
+            probe_output/
+            .probe_kernel/train.py
+            .probe_kernel/kernel-metadata.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Final verdict
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python - <<'PY'
           import os
           from pathlib import Path
-
-          logs = list(Path('probe_output').glob('*.log'))
-          assert logs, 'No Kaggle log found'
-          raw = logs[0].read_text(encoding='utf-8', errors='replace')
-          try:
-              records = json.loads(raw)
-              output = ''.join(str(item.get('data', '')) for item in records)
-          except (ValueError, TypeError):
-              output = raw
-          assert 'GITHUB_ACTIONS_DATASET_GPU_PASS' in output, 'Missing GPU success marker'
+          log = Path('probe_output/kernel_stdout.txt')
+          status = Path('probe_output/status.txt')
+          output = log.read_text(encoding='utf-8', errors='replace') if log.exists() else ''
+          state = status.read_text(encoding='utf-8').strip() if status.exists() else 'UNKNOWN'
           expected = 'GitHub Actions run ' + os.environ['GITHUB_RUN_ID']
-          assert expected in output, 'Kaggle did not read this run\'s dataset version'
-          print('END_TO_END_PROBE_PASS')
+          print('FINAL_KERNEL_STATUS:', state)
+          if state == 'COMPLETE' and 'GITHUB_ACTIONS_DATASET_GPU_PASS' in output and expected in output:
+              print('END_TO_END_PROBE_PASS')
+          else:
+              print('END_TO_END_PROBE_FAIL')
+              print('Inspect the Always collect Kaggle logs step and downloaded artifact.')
+              raise SystemExit(1)
           PY
