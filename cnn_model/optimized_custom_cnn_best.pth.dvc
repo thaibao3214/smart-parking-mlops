@@ -1,0 +1,5 @@
+outs:
+- md5: 67dc1fb9605a2e928a993bd8a0603bb5
+  size: 4856230
+  hash: md5
+  path: optimized_custom_cnn_best.pth
