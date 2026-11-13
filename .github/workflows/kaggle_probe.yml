@@ -83,7 +83,7 @@ jobs:
 
           print("PROBE_START", flush=True)
           print("PYTHON:", sys.version, flush=True)
-          root = Path("/kaggle/input/smart-parking-mlops-training")
+          root = Path("/kaggle/input/datasets/nguynngthibo/smart-parking-mlops-training")
           print("INPUT_EXISTS:", root.exists(), flush=True)
           print("INPUT_FILES:", [str(p) for p in root.glob("*")][:30], flush=True)
           print("ALL_INPUT_PATHS:", [str(p) for p in Path('/kaggle/input').rglob('github_actions_probe.txt')][:20], flush=True)
