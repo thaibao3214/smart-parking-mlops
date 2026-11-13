@@ -19,7 +19,7 @@ jobs:
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       DATASET_SLUG: nguynngthibo/smart-parking-mlops-training
-      KERNEL_SLUG: nguynngthibo/smart-parking-actions-probe
+      KERNEL_SLUG: nguynngthibo/smart-parking-github-actions-probe
 
     steps:
       - name: Checkout repository
@@ -212,7 +212,7 @@ jobs:
           from pathlib import Path
 
           log = Path(
-              "probe_output/smart-parking-actions-probe.log"
+              "probe_output/smart-parking-github-actions-probe.log"
           )
 
           if not log.exists():
