@@ -1,0 +1,123 @@
+name: Smart Parking - Stage 6 Test Evaluation and Model Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      per_class:
+        description: 'PKLot test crops per class (default 1000)'
+        required: false
+        default: '1000'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: smart-parking-stage6-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+      DAGSHUB_USERNAME: thaibao3214
+      DAGSHUB_REPO: smart-parking-mlops
+      PER_CLASS: ${{ inputs.per_class || '1000' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CPU evaluation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install 'dvc[s3]==3.67.1' 'mlflow==2.22.2' 'Pillow>=10,<12'
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1' 'torchvision==0.20.1'
+          python - <<'PY'
+          import torch, torchvision
+          print('TORCH:', torch.__version__)
+          print('TORCHVISION:', torchvision.__version__)
+          assert torch.cuda.is_available() is False
+          print('STAGE6_CPU_DEPS_PASS')
+          PY
+
+      - name: DVC pull exact versioned dataset and all v1 checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, subprocess
+          token = os.environ.get('DAGSHUB_TOKEN', '').strip()
+          if not token or any(ord(c) < 33 or ord(c) == 127 for c in token):
+              raise SystemExit('Invalid DAGSHUB_TOKEN secret')
+          for key in ('access_key_id', 'secret_access_key'):
+              subprocess.run(['dvc','remote','modify','--local','origin',key,token], check=True)
+          PY
+          dvc pull data.dvc -r origin --jobs 4
+          for pointer in \
+            mobilenet_model/mobilenet_v3_small_best.pth.dvc \
+            resnet_model/resnet18_best.pth.dvc \
+            cnn_model/optimized_custom_cnn_best.pth.dvc
+          do
+            test -s "$pointer"
+            dvc pull "$pointer" -r origin
+          done
+          test -s data/test/_annotations.coco.json
+          test -s data/realtime_stream/manifest.json
+          echo 'STAGE6_DVC_PULL_PASS'
+
+      - name: Download previously verified Stage 3 and Stage 4 candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p input_stage3 input_stage4
+          gh run download 43458044027 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name smart-parking-stage3-43458044027-1 \
+            --dir input_stage3
+          gh run download 43479352874 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name smart-parking-stage4-43479352874-1 \
+            --dir input_stage4
+          test -s input_stage3/stage3_logs/stage3_candidate_mobilenetv3.pth
+          test -s input_stage4/stage4_logs/stage4_candidate_resnet18.pth
+          test -s input_stage4/stage4_logs/stage4_candidate_custom_cnn.pth
+          echo 'STAGE6_CANDIDATES_DOWNLOADED_PASS'
+
+      - name: Evaluate six checkpoints on common excluded-source test subset
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PER_CLASS" =~ ^[0-9]+$ ]] && (( PER_CLASS >= 100 )) && (( PER_CLASS <= 10000 )) || {
+            echo 'per_class must be an integer from 100 to 10000'
+            exit 1
+          }
+          python -m py_compile pipeline/stage6_evaluate.py
+          python pipeline/stage6_evaluate.py \
+            --stage3 input_stage3 \
+            --stage4 input_stage4 \
+            --test-dir data/test \
+            --online-manifest data/realtime_stream/manifest.json \
+            --per-class "$PER_CLASS" \
+            --batch-size 32 \
+            --latency-runs 60 \
+            --output stage6_output
+          cat stage6_output/stage6_summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload read-only results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-parking-stage6-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage6_output/
+          if-no-files-found: warn
+          retention-days: 30
