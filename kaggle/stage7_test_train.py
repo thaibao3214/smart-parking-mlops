@@ -1,4 +1,6 @@
-"""TEST ONLY: Kaggle training on PKLot train; no online data or Production promotion."""
+"""TEST ONLY: Kaggle retraining from human-confirmed simulated PKLot TRAIN crops.
+Never promotes or modifies Production.
+"""
 import hashlib
 import json
 import math
@@ -126,7 +128,7 @@ def load_payload():
             if digest(root / r['file']) != r['sha256']:
                 raise ValueError('Image integrity failure')
         if len(m['valid']) < 200 or len(m['train']) < 32:
-            raise ValueError('Insufficient new training or validation data')
+            raise ValueError('Insufficient confirmed training or validation data')
         print('STAGE7_CURRENT_RUN_DATASET_PASS', flush=True)
         print('STAGE7_CHECKSUMS_PASS', flush=True)
         return root, m
@@ -191,7 +193,7 @@ def main():
     models = {name: train_one(name, root, m, device) for name in ('mobilenetv3', 'resnet18', 'custom_cnn')}
     result = {'stage': 'stage7-test-only', 'test_only': True, 'github_run_id': m['github_run_id'],
               'git_commit': m['git_commit'], 'approved_dvc_sha256': m['approved_dvc_sha256'],
-              'data_dvc_sha256': m['data_dvc_sha256'], 'train_samples': len(m['train']),
+              'data_dvc_sha256': m['data_dvc_sha256'], 'online_dvc_sha256': m['online_dvc_sha256'], 'train_samples': len(m['train']),
               'valid_samples': len(m['valid']), 'gpu': torch.cuda.get_device_name(0),
               'production_approved': False, 'models': models}
     (OUTPUT / 'stage7_train_report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

@@ -1,0 +1,6 @@
+outs:
+- md5: 88c4d3f1c3334a6a4a3a44f74462d3d6.dir
+  size: 1820431
+  nfiles: 41
+  hash: md5
+  path: simulation_train

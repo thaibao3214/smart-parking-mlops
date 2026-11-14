@@ -1,4 +1,6 @@
-"""Post-process TEST_ONLY gate metrics and log under a separate MLflow experiment."""
+"""TEST ONLY: preserve dynamic winner selected by shared Stage 7 CPU gate and log to MLflow.
+Never modifies any Registry alias.
+"""
 import json
 import os
 from pathlib import Path
@@ -15,14 +17,14 @@ def main():
         raise ValueError('Stale gate report')
     report.update({
         'stage': 'stage7-test-only-gate', 'test_only': True,
-        'gate': 'TEST_ONLY_NO_PROMOTION', 'suggested_for_review': None,
+        'gate': 'TEST_ONLY_NO_PROMOTION',
         'production_approved': False, 'registry_alias_changed': False,
-        'warning': 'PKLot train -> PKLot valid technical test; do not treat as live data or production evaluation',
+        'warning': 'Confirmed PKLot train simulation -> PKLot valid technical holdout; not independent camera data',
     })
     path = root / 'stage7_test_report.json'
     path.write_text(json.dumps(report, indent=2), encoding='utf-8')
     with (root / 'stage7_summary.md').open('a', encoding='utf-8') as fp:
-        fp.write('\n\n**TEST ONLY: PKLot train/valid, NOT new online data. No Production promotion permitted.**\n')
+        fp.write(f'\n\n**TEST ONLY: confirmed PKLot train simulated camera; proposed winner: {report.get("suggested_for_review") or "none"}. No Production promotion.**\n')
     import mlflow
     token = os.environ.get('DAGSHUB_TOKEN', '').strip()
     if not token or any(ord(ch) < 33 or ord(ch) == 127 for ch in token):
@@ -36,7 +38,7 @@ def main():
     for name, row in report['models'].items():
         with mlflow.start_run(run_name=f'test-only-{report["github_run_id"]}-{name}'):
             mlflow.set_tags({'stage': '7', 'test_only': 'true', 'origin': 'PKLot train',
-                             'decision': 'NO_PROMOTION', 'production_approved': 'false'})
+                             'decision': 'NO_PROMOTION', 'production_approved': 'false', 'suggested_winner': str(report.get('suggested_for_review'))})
             mlflow.log_params({'model': name, 'git_commit': report['git_commit'],
                                'data_dvc_sha256': report['data_dvc_sha256']})
             mlflow.log_metrics({'baseline_macro_f1': row['baseline']['macro_f1'],

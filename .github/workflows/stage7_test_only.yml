@@ -54,6 +54,8 @@ jobs:
               subprocess.run(['dvc', 'remote', 'modify', '--local', 'origin', key, token], check=True)
           PY
           dvc pull data.dvc -r origin --jobs 4
+          dvc pull simulation_train.dvc -r origin --jobs 4
+          dvc pull confirmed_train_sim.dvc -r origin --jobs 4
           for pointer in \
             mobilenet_model/mobilenet_v3_small_best.pth.dvc \
             resnet_model/resnet18_best.pth.dvc \
@@ -63,9 +65,11 @@ jobs:
           done
           test -s data/train/_annotations.coco.json
           test -s data/valid/_annotations.coco.json
+          test -s simulation_train/manifest.json
+          test -d confirmed_train_sim/frames
           echo STAGE7_TEST_ONLY_DVC_PASS
 
-      - name: Package PKLot TRAIN and VALID strictly as TEST ONLY
+      - name: Package confirmed TRAIN SIM crops and VALID strictly as TEST ONLY
         shell: bash
         run: |
           set -euo pipefail
@@ -77,7 +81,7 @@ jobs:
           assert manifest['stage'] == 'stage7-test-only'
           assert manifest['origin'] == 'pklot_train_test_only'
           assert manifest['test_only'] is True and manifest['production_approved'] is False
-          assert len(manifest['train']) == 64 and len(manifest['valid']) == 256
+          assert len(manifest['train']) == 2000 and len(manifest['valid']) == 256
           assert manifest['github_run_id'] == os.environ['GITHUB_RUN_ID']
           assert manifest['git_commit'] == os.environ['GITHUB_SHA']
           name = manifest['dataset_name']
@@ -178,6 +182,14 @@ jobs:
           python pipeline/stage7_gate.py --dataset .stage7_test_dataset \
             --kaggle-output stage7_test_logs --out stage7_test_output --offline
           python pipeline/stage7_test_log.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('stage7_test_output/stage7_test_report.json').read_text(encoding='utf-8'))
+          print('STAGE7_DYNAMIC_WINNER:', report.get('suggested_for_review') or 'none')
+          assert report['production_approved'] is False
+          assert report['registry_alias_changed'] is False
+          PY
           cat stage7_test_output/stage7_summary.md >> "$GITHUB_STEP_SUMMARY"
           echo 'STAGE7_TEST_ONLY_END_TO_END_PASS'
 
