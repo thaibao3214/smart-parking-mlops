@@ -2,6 +2,10 @@ name: Smart Parking - Stage 7 TEST ONLY GPU Integration
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'pipeline/stage7_batches/*.json'
 
 permissions:
   contents: read
@@ -38,7 +42,7 @@ jobs:
           set -euo pipefail
           python -m pip install 'dvc[s3]==3.67.1' 'kaggle==2.2.5' 'mlflow==2.22.2' 'Pillow>=10,<12' 'six>=1.16'
           python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1' 'torchvision==0.20.1'
-          python -m py_compile pipeline/stage7_test_prepare.py pipeline/stage7_gate.py pipeline/stage7_test_log.py kaggle/stage7_test_train.py
+          python -m py_compile pipeline/stage7_test_prepare.py pipeline/stage7_gate.py pipeline/stage7_test_log.py pipeline/stage7_auto_register_qa.py kaggle/stage7_test_train.py
           echo STAGE7_TEST_ONLY_DEPS_PASS
 
       - name: DVC pull PKLot version and 3 baseline checkpoints
@@ -192,6 +196,13 @@ jobs:
           PY
           cat stage7_test_output/stage7_summary.md >> "$GITHUB_STEP_SUMMARY"
           echo 'STAGE7_TEST_ONLY_END_TO_END_PASS'
+
+      - name: Verify candidate and auto-register winner to MLflow QA (never Production)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python pipeline/stage7_auto_register_qa.py
+          echo 'STAGE7_AUTO_QA_REGISTRATION_STEP_PASS'
 
       - name: Upload test-only results (never Production)
         if: always()
