@@ -1,0 +1,13 @@
+{
+  "batch_id": "9b741ef6c3f168523585",
+  "origin": "pklot_train_simulation",
+  "mode": "TEST_ONLY_NO_PROMOTION",
+  "frames": 20,
+  "crops": 2000,
+  "class_counts": {
+    "Empty": 1130,
+    "Occupied": 870
+  },
+  "data_version": "confirmed_train_sim.dvc",
+  "production_approved": false
+}
