@@ -1,0 +1,154 @@
+
+name: Smart Parking - Stage 7 Cloud Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Stage 7 Python syntax
+        run: |
+          python -m py_compile pipeline/stage7_prepare.py
+          python -m py_compile pipeline/stage7_gate.py
+          python -m py_compile pipeline/stage7_promote.py
+          python -m py_compile kaggle/stage7_train.py
+
+          echo "STAGE7_SYNTAX_PASS"
+
+      - name: Install DVC
+        run: |
+          python -m pip install "dvc[s3]==3.67.1"
+
+      - name: Configure DagsHub DVC authentication
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import os
+          import subprocess
+
+          token = os.environ.get("DAGSHUB_TOKEN", "").strip()
+
+          if not token:
+              raise SystemExit("Missing DAGSHUB_TOKEN")
+
+          if any(ord(c) < 33 or ord(c) == 127 for c in token):
+              raise SystemExit("Invalid DAGSHUB_TOKEN")
+
+          for key in ("access_key_id", "secret_access_key"):
+              subprocess.run(
+                  ["dvc", "remote", "modify",
+                   "--local", "origin", key, token],
+                  check=True
+              )
+
+          print("STAGE7_DVC_AUTH_PASS")
+          PY
+
+      - name: Verify DVC checkpoint availability
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dvc pull mobilenet_model/mobilenet_v3_small_best.pth.dvc -r origin
+          dvc pull resnet_model/resnet18_best.pth.dvc -r origin
+          dvc pull cnn_model/optimized_custom_cnn_best.pth.dvc -r origin
+
+          test -s mobilenet_model/mobilenet_v3_small_best.pth
+          test -s resnet_model/resnet18_best.pth
+          test -s cnn_model/optimized_custom_cnn_best.pth
+
+          echo "STAGE7_THREE_CHECKPOINTS_PASS"
+
+      - name: Verify approved data gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import tempfile
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as tmp:
+              result = subprocess.run(
+                  [
+                      sys.executable,
+                      "pipeline/stage7_prepare.py",
+                      "--approved-dir", tmp,
+                  ],
+                  capture_output=True,
+                  text=True,
+              )
+
+          if result.returncode == 0:
+              raise SystemExit(
+                  "FAIL: unapproved data was accepted"
+              )
+
+          if "Missing human-reviewed manifest" not in (
+              result.stdout + result.stderr
+          ):
+              raise SystemExit(
+                  "FAIL: unexpected preparation error"
+              )
+
+          print("STAGE7_UNAPPROVED_DATA_BLOCKED_PASS")
+          PY
+
+      - name: Verify Production protection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import subprocess
+          import sys
+
+          result = subprocess.run(
+              [
+                  sys.executable,
+                  "pipeline/stage7_promote.py",
+              ],
+              capture_output=True,
+              text=True,
+          )
+
+          output = result.stdout + result.stderr
+
+          if result.returncode == 0:
+              raise SystemExit(
+                  "FAIL: promotion without approval succeeded"
+              )
+
+          if "--confirm-production required" not in output:
+              raise SystemExit(
+                  "FAIL: unexpected promotion response"
+              )
+
+          print("STAGE7_PRODUCTION_PROTECTION_PASS")
+          PY
+
+      - name: Final smoke-test result
+        run: |
+          echo "STAGE7_CLOUD_SMOKE_TEST_PASS"
+          echo "PRODUCTION_UNCHANGED"
