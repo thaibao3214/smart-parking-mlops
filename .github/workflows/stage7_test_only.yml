@@ -1,0 +1,199 @@
+name: Smart Parking - Stage 7 TEST ONLY GPU Integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smart-parking-stage7-test-only
+  cancel-in-progress: false
+
+jobs:
+  test-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      DAGSHUB_USERNAME: thaibao3214
+      DAGSHUB_REPO: smart-parking-mlops
+      KERNEL_SLUG: nguynngthibo/smart-parking-stage7-test-only
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'dvc[s3]==3.67.1' 'kaggle==2.2.5' 'mlflow==2.22.2' 'Pillow>=10,<12' 'six>=1.16'
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1' 'torchvision==0.20.1'
+          python -m py_compile pipeline/stage7_test_prepare.py pipeline/stage7_gate.py pipeline/stage7_test_log.py kaggle/stage7_test_train.py
+          echo STAGE7_TEST_ONLY_DEPS_PASS
+
+      - name: DVC pull PKLot version and 3 baseline checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, subprocess
+          token = os.environ.get('DAGSHUB_TOKEN', '').strip()
+          if not token or any(ord(ch) < 33 or ord(ch) == 127 for ch in token):
+              raise SystemExit('Missing/malformed DAGSHUB_TOKEN')
+          for key in ('access_key_id', 'secret_access_key'):
+              subprocess.run(['dvc', 'remote', 'modify', '--local', 'origin', key, token], check=True)
+          PY
+          dvc pull data.dvc -r origin --jobs 4
+          for pointer in \
+            mobilenet_model/mobilenet_v3_small_best.pth.dvc \
+            resnet_model/resnet18_best.pth.dvc \
+            cnn_model/optimized_custom_cnn_best.pth.dvc
+          do
+            dvc pull "$pointer" -r origin
+          done
+          test -s data/train/_annotations.coco.json
+          test -s data/valid/_annotations.coco.json
+          echo STAGE7_TEST_ONLY_DVC_PASS
+
+      - name: Package PKLot TRAIN and VALID strictly as TEST ONLY
+        shell: bash
+        run: |
+          set -euo pipefail
+          python pipeline/stage7_test_prepare.py
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          manifest = json.loads(Path('.stage7_test_dataset/manifest.json').read_text(encoding='utf-8'))
+          assert manifest['stage'] == 'stage7-test-only'
+          assert manifest['origin'] == 'pklot_train_test_only'
+          assert manifest['test_only'] is True and manifest['production_approved'] is False
+          assert len(manifest['train']) == 64 and len(manifest['valid']) == 256
+          assert manifest['github_run_id'] == os.environ['GITHUB_RUN_ID']
+          assert manifest['git_commit'] == os.environ['GITHUB_SHA']
+          name = manifest['dataset_name']
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
+              stream.write(f'DATASET_NAME={name}\n')
+              stream.write(f'DATASET_SLUG=nguynngthibo/{name}\n')
+          print('STAGE7_TEST_ONLY_PREP_PASS')
+          PY
+
+      - name: Create isolated private Kaggle test dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KAGGLE_API_TOKEN"
+          kaggle datasets create -p .stage7_test_dataset
+          ready=0
+          for i in $(seq 1 60); do
+            if status=$(kaggle datasets status "$DATASET_SLUG" 2>&1); then
+              echo "[$i] $status"
+              if [[ "$status" == *ready* ]]; then ready=1; break; fi
+              if [[ "$status" == *error* || "$status" == *failed* ]]; then exit 1; fi
+            fi
+            sleep 10
+          done
+          test "$ready" -eq 1 || { echo 'Dataset readiness timeout'; exit 1; }
+          echo STAGE7_TEST_ONLY_DATASET_READY_PASS
+
+      - name: Push isolated Kaggle GPU TEST ONLY job
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .stage7_test_kernel stage7_test_logs
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          source = Path('kaggle/stage7_test_train.py').read_text(encoding='utf-8')
+          for marker, value in (('__STAGE7_DATASET_NAME__', os.environ['DATASET_NAME']),
+                                ('__EXPECTED_RUN_ID__', os.environ['GITHUB_RUN_ID'])):
+              assert source.count(marker) == 1, marker
+              source = source.replace(marker, value)
+          Path('.stage7_test_kernel/train.py').write_text(source, encoding='utf-8')
+          meta = {'id': os.environ['KERNEL_SLUG'], 'title': 'smart-parking-stage7-test-only',
+                  'code_file': 'train.py', 'language': 'python', 'kernel_type': 'script',
+                  'is_private': True, 'enable_gpu': True, 'enable_internet': False,
+                  'machine_shape': 'NvidiaTeslaT4', 'dataset_sources': [os.environ['DATASET_SLUG']],
+                  'kernel_sources': [], 'competition_sources': [], 'model_sources': []}
+          Path('.stage7_test_kernel/kernel-metadata.json').write_text(json.dumps(meta, indent=2), encoding='utf-8')
+          PY
+          python -m py_compile .stage7_test_kernel/train.py
+          kaggle kernels push -p .stage7_test_kernel
+          echo STAGE7_TEST_ONLY_KAGGLE_PUSH_PASS
+
+      - name: Await Kaggle completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage7_test_logs
+          for i in $(seq 1 200); do
+            if ! status=$(kaggle kernels status "$KERNEL_SLUG" 2>&1); then
+              echo "$status"; echo ERROR > stage7_test_logs/status.txt; break
+            fi
+            echo "[$i] $status"
+            if [[ "$status" == *COMPLETE* ]]; then echo COMPLETE > stage7_test_logs/status.txt; break; fi
+            if [[ "$status" == *ERROR* || "$status" == *FAILED* || "$status" == *CANCEL* ]]; then
+              echo ERROR > stage7_test_logs/status.txt; break
+            fi
+            sleep 15
+          done
+          test -s stage7_test_logs/status.txt || echo TIMEOUT > stage7_test_logs/status.txt
+          cat stage7_test_logs/status.txt
+
+      - name: Download and verify Kaggle candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 5); do
+            if kaggle kernels output "$KERNEL_SLUG" -p stage7_test_logs; then break; fi
+            sleep 8
+          done
+          test "$(cat stage7_test_logs/status.txt)" = COMPLETE
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('stage7_test_logs/stage7_train_report.json').read_text(encoding='utf-8'))
+          assert report['stage'] == 'stage7-test-only' and report['test_only'] is True
+          assert str(report['github_run_id']) == os.environ['GITHUB_RUN_ID']
+          assert report['git_commit'] == os.environ['GITHUB_SHA']
+          assert report['production_approved'] is False
+          for name in ('mobilenetv3', 'resnet18', 'custom_cnn'):
+              assert (Path('stage7_test_logs') / f'stage7_candidate_{name}.pth').is_file()
+          print('STAGE7_TEST_ONLY_THREE_CANDIDATES_PASS')
+          PY
+
+      - name: CPU gate offline then MLflow TEST ONLY experiment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python pipeline/stage7_gate.py --dataset .stage7_test_dataset \
+            --kaggle-output stage7_test_logs --out stage7_test_output --offline
+          python pipeline/stage7_test_log.py
+          cat stage7_test_output/stage7_summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo 'STAGE7_TEST_ONLY_END_TO_END_PASS'
+
+      - name: Upload test-only results (never Production)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-parking-stage7-TEST-ONLY-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            stage7_test_output/stage7_test_report.json
+            stage7_test_output/stage7_summary.md
+            stage7_test_logs/stage7_train_report.json
+            stage7_test_logs/stage7_candidate_mobilenetv3.pth
+            stage7_test_logs/stage7_candidate_resnet18.pth
+            stage7_test_logs/stage7_candidate_custom_cnn.pth
+            stage7_test_logs/status.txt
+            .stage7_test_dataset/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
