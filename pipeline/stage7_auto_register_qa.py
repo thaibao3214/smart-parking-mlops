@@ -41,9 +41,17 @@ def verify(root=Path('.')):
             manifest.get('test_only') is not True or
             manifest.get('production_approved') is not False):
         raise ValueError('Gate/provenance contract violated')
-    if len(manifest.get('train', [])) != 2000 or len(manifest.get('valid', [])) != 256:
-        raise ValueError('Unexpected training/holdout sizes')
-    if (train.get('train_samples') != 2000 or train.get('valid_samples') != 256 or
+    train_count = len(manifest.get('train', []))
+    reviewed_frames = manifest.get('reviewed_frame_count', 20)
+    excluded_ids = manifest.get('excluded_source_image_ids', [])
+    if (not isinstance(excluded_ids, list) or len(excluded_ids) not in (0, 2) or
+            len(set(excluded_ids)) != len(excluded_ids) or
+            reviewed_frames != 20 - len(excluded_ids) or
+            train_count != reviewed_frames * 100):
+        raise ValueError('Invalid audited training frame/crop counts')
+    if len(manifest.get('valid', [])) != 256:
+        raise ValueError('Unexpected validation size')
+    if (train.get('train_samples') != train_count or train.get('valid_samples') != 256 or
             report.get('data_dvc_sha256') != manifest.get('data_dvc_sha256') or
             train.get('online_dvc_sha256') != manifest.get('online_dvc_sha256')):
         raise ValueError('Dataset provenance mismatch')
@@ -80,7 +88,7 @@ def log_dataset_lineage(mlflow, manifest):
         'validation': manifest['data_dvc_sha256'],
     }
     sources = {
-        'training': 'confirmed_train_sim.dvc',
+        'training': manifest.get('online_dvc_pointer', 'confirmed_train_sim.dvc'),
         'validation': 'data.dvc',
     }
     for context, key in (('training', 'train'), ('validation', 'valid')):
@@ -161,7 +169,8 @@ def register(report, train, manifest, winner, root=Path('.')):
                          'stage7_candidate_sha256': sha})
         mlflow.log_params({'model': winner, 'train_samples': len(manifest['train']),
                            'valid_samples': len(manifest['valid']),
-                           'online_dvc_sha256': manifest['online_dvc_sha256']})
+                           'online_dvc_sha256': manifest['online_dvc_sha256'],
+                           'batch_id': manifest.get('batch_id', '')})
         log_dataset_lineage(mlflow, manifest)
         mlflow.log_metrics({'candidate_macro_f1': row['candidate']['macro_f1'],
                             'candidate_accuracy': row['candidate']['accuracy'],

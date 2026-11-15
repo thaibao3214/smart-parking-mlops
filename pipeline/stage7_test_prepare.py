@@ -8,9 +8,14 @@ import zipfile
 from pathlib import Path
 from PIL import Image
 from stage7_prepare import CHECKPOINTS, sha256, validation_samples
+from stage7_exclude_frame import load_exclusions
 
-SIM = Path('simulation_train')
-CONFIRMED = Path('confirmed_train_sim')
+SIM = Path(os.environ.get('STAGE7_SIM_DIR', 'simulation_train'))
+CONFIRMED = Path(os.environ.get('STAGE7_CONFIRMED_DIR', 'confirmed_train_sim'))
+SIM_POINTER = os.environ.get('STAGE7_SIM_POINTER', 'simulation_train.dvc')
+CONF_POINTER = os.environ.get('STAGE7_CONFIRMED_POINTER', 'confirmed_train_sim.dvc')
+BATCH_ID = os.environ.get('STAGE7_BATCH_ID', '')
+
 
 
 def confirmed_rows():
@@ -19,6 +24,8 @@ def confirmed_rows():
             sm.get('source_split') != 'data/train' or
             sm.get('test_only') is not True or sm.get('production_approved') is not False):
         raise ValueError('Simulation manifest must clearly identify PKLot TRAIN TEST_ONLY')
+    if BATCH_ID and sm.get('batch_name') != Path(SIM).name:
+        raise ValueError('Batch name mismatch')
     mapping = {str(f['image_id']): f for f in sm['images']}
     if len(mapping) != len(sm['images']) or len(mapping) != 20:
         raise ValueError('Expected 20 distinct PKLot train simulation frames')
@@ -29,15 +36,19 @@ def confirmed_rows():
         simulated = SIM / 'images' / Path(f['file_name']).name
         if not original.is_file() or not simulated.is_file() or sha256(original) != sha256(simulated):
             raise ValueError('Simulated frame does not match original PKLot TRAIN frame')
+    excluded_ids = load_exclusions(SIM, CONFIRMED, sm)
+    required_count = 20 - len(excluded_ids)
     files = sorted((CONFIRMED / 'frames').glob('*/labels.json'))
-    if len(files) != len(mapping):
-        raise ValueError(f'Expected all 20 frames confirmed, received {len(files)}')
+    if len(files) < required_count or len(files) > 20:
+        raise ValueError(f'Expected {required_count} reviewed frames, received {len(files)}')
     rows = []
     used_images = set()
     counts = {0: 0, 1: 0}
     for labels in files:
         payload = json.loads(labels.read_text(encoding='utf-8'))
         image_id = str(payload['source_image_id'])
+        if image_id in excluded_ids:
+            continue  # Deliberately rejected source, never package its crops.
         ref = mapping.get(image_id)
         if ref is None or ref['file_name'] != payload['source_image'] or image_id in used_images:
             raise ValueError('Unexpected, duplicate, or wrong-source confirmation')
@@ -67,8 +78,10 @@ def confirmed_rows():
                 im.verify()
             counts[index] += 1
             rows.append((index, src, ref['source_file_name'], image_id, slot_id))
-    if len(used_images) != 20 or min(counts.values()) < 16:
+    if len(used_images) != required_count or min(counts.values()) < 16:
         raise ValueError(f'Incomplete reviewed batch or missing class: {counts}')
+    if len(rows) != required_count * 100:
+        raise ValueError(f'Expected exactly {required_count * 100} crops, got {len(rows)}')
     return rows
 
 
@@ -78,7 +91,24 @@ def main():
     dest = Path('.stage7_test_dataset')
     if dest.exists():
         raise RuntimeError('Output exists; use a clean Actions checkout')
+    if BATCH_ID:
+        batch_marker = Path('pipeline/stage7_batches') / (BATCH_ID + '.json')
+        marker = json.loads(batch_marker.read_text(encoding='utf-8'))
+        if (marker.get('batch_id') != BATCH_ID or marker.get('batch_name') != SIM.name or
+                marker.get('sim_pointer') != SIM_POINTER or marker.get('confirmed_pointer') != CONF_POINTER or
+                marker.get('sim_dvc_sha256') != sha256(SIM_POINTER) or
+                marker.get('online_dvc_sha256') != sha256(CONF_POINTER) or
+                marker.get('production_approved') is not False):
+            raise ValueError('Source batch marker/DVC pointer mismatch: fail closed')
+        current_manifest = json.loads((SIM / 'manifest.json').read_text(encoding='utf-8'))
+        current_excluded = sorted(load_exclusions(SIM, CONFIRMED, current_manifest))
+        if (marker.get('excluded_source_image_ids', []) != current_excluded or
+                marker.get('frames') != 20 - len(current_excluded) or
+                marker.get('crops') != 100 * (20 - len(current_excluded))):
+            raise ValueError('Batch marker exclusion/data counts mismatch')
     rows_train = confirmed_rows()
+    sim_manifest = json.loads((SIM / 'manifest.json').read_text(encoding='utf-8'))
+    excluded_ids = load_exclusions(SIM, CONFIRMED, sim_manifest)
     rows_valid = validation_samples(Path('data/valid'), 128)
     train_frames = {r[2] for r in rows_train}
     valid_frames = {src.name for _, src, _, _ in rows_valid}
@@ -87,14 +117,18 @@ def main():
     dataset_name = f"smart-parking-stage7-test-r{os.environ['GITHUB_RUN_ID']}-a{os.environ.get('GITHUB_RUN_ATTEMPT','1')}"
     manifest = {
         'stage': 'stage7-test-only', 'origin': 'pklot_train_test_only',
-        'train_source': '20 manually confirmed frames simulated from PKLot data/train',
+        'train_source': 'Manually confirmed frames simulated from PKLot data/train',
+        'reviewed_frame_count': 20 - len(excluded_ids),
+        'excluded_source_image_ids': sorted(excluded_ids),
         'validation_source': 'PKLot data/valid (technical holdout, NOT blind independent)',
         'test_only': True, 'production_approved': False,
         'github_run_id': os.environ['GITHUB_RUN_ID'], 'git_commit': os.environ['GITHUB_SHA'],
         'dataset_name': dataset_name, 'approved_dvc_sha256': 'NOT_APPLICABLE_TEST_ONLY',
         'data_dvc_sha256': sha256('data.dvc'),
-        'online_dvc_sha256': sha256('confirmed_train_sim.dvc'),
-        'sim_dvc_sha256': sha256('simulation_train.dvc'),
+        'online_dvc_sha256': sha256(CONF_POINTER),
+        'sim_dvc_sha256': sha256(SIM_POINTER),
+        'online_dvc_pointer': CONF_POINTER, 'sim_dvc_pointer': SIM_POINTER,
+        'batch_id': BATCH_ID, 'batch_name': SIM.name,
         'train': [], 'valid': [], 'checkpoints': {},
         'warning': 'Technical pipeline validation only; PKLot TRAIN simulation, NOT new camera captures',
     }

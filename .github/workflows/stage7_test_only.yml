@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 2
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -42,8 +43,45 @@ jobs:
           set -euo pipefail
           python -m pip install 'dvc[s3]==3.67.1' 'kaggle==2.2.5' 'mlflow==2.22.2' 'Pillow>=10,<12' 'six>=1.16'
           python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.5.1' 'torchvision==0.20.1'
-          python -m py_compile pipeline/stage7_test_prepare.py pipeline/stage7_gate.py pipeline/stage7_test_log.py pipeline/stage7_auto_register_qa.py kaggle/stage7_test_train.py
+          python -m py_compile pipeline/stage7_test_prepare.py pipeline/stage7_exclude_frame.py pipeline/stage7_gate.py pipeline/stage7_test_log.py pipeline/stage7_auto_register_qa.py kaggle/stage7_test_train.py
           echo STAGE7_TEST_ONLY_DEPS_PASS
+
+      - name: Resolve immutable batch marker for push event
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PYCODE'
+          import json, os, subprocess
+          from pathlib import Path
+          if os.environ.get('GITHUB_EVENT_NAME') != 'push':
+              print('STAGE7_WORKFLOW_DISPATCH_LEGACY_MODE')
+          else:
+              changed = subprocess.check_output(
+                  ['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], text=True
+              ).splitlines()
+              markers = [p for p in changed if p.startswith('pipeline/stage7_batches/') and p.endswith('.json')]
+              if len(markers) != 1:
+                  raise ValueError('Expected exactly one batch marker in triggering commit')
+              path = Path(markers[0]); m = json.loads(path.read_text(encoding='utf-8'))
+              name = m.get('batch_name')
+              if name == 'legacy':
+                  raise ValueError('Old batch must not be retriggered by a new commit')
+              if not isinstance(name, str) or not __import__('re').fullmatch(r'batch_[0-9]{3,6}', name):
+                  raise ValueError('Malformed batch name')
+              if m.get('batch_id') != path.stem or m.get('production_approved') is not False:
+                  raise ValueError('Invalid marker provenance')
+              vars = {
+                  'STAGE7_BATCH_ID': path.stem,
+                  'STAGE7_SIM_DIR': f'simulation_batches/{name}',
+                  'STAGE7_CONFIRMED_DIR': f'confirmed_batches/{name}',
+                  'STAGE7_SIM_POINTER': 'simulation_batches.dvc',
+                  'STAGE7_CONFIRMED_POINTER': 'confirmed_batches.dvc',
+              }
+              with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
+                  for k, v in vars.items():
+                      f.write(f'{k}={v}\n')
+              print('STAGE7_RESOLVED_IMMUTABLE_BATCH:', name, path.stem)
+          PYCODE
 
       - name: DVC pull PKLot version and 3 baseline checkpoints
         shell: bash
@@ -58,8 +96,13 @@ jobs:
               subprocess.run(['dvc', 'remote', 'modify', '--local', 'origin', key, token], check=True)
           PY
           dvc pull data.dvc -r origin --jobs 4
-          dvc pull simulation_train.dvc -r origin --jobs 4
-          dvc pull confirmed_train_sim.dvc -r origin --jobs 4
+          if [[ -n "${STAGE7_BATCH_ID:-}" ]]; then
+            dvc pull simulation_batches.dvc -r origin --jobs 4
+            dvc pull confirmed_batches.dvc -r origin --jobs 4
+          else
+            dvc pull simulation_train.dvc -r origin --jobs 4
+            dvc pull confirmed_train_sim.dvc -r origin --jobs 4
+          fi
           for pointer in \
             mobilenet_model/mobilenet_v3_small_best.pth.dvc \
             resnet_model/resnet18_best.pth.dvc \
@@ -69,8 +112,8 @@ jobs:
           done
           test -s data/train/_annotations.coco.json
           test -s data/valid/_annotations.coco.json
-          test -s simulation_train/manifest.json
-          test -d confirmed_train_sim/frames
+          test -s "${STAGE7_SIM_DIR:-simulation_train}/manifest.json"
+          test -d "${STAGE7_CONFIRMED_DIR:-confirmed_train_sim}/frames"
           echo STAGE7_TEST_ONLY_DVC_PASS
 
       - name: Package confirmed TRAIN SIM crops and VALID strictly as TEST ONLY
@@ -85,7 +128,13 @@ jobs:
           assert manifest['stage'] == 'stage7-test-only'
           assert manifest['origin'] == 'pklot_train_test_only'
           assert manifest['test_only'] is True and manifest['production_approved'] is False
-          assert len(manifest['train']) == 2000 and len(manifest['valid']) == 256
+          assert manifest.get('batch_id', '') == os.environ.get('STAGE7_BATCH_ID', '')
+          n = len(manifest['train'])
+          k = manifest.get('reviewed_frame_count', 20)
+          excluded = manifest.get('excluded_source_image_ids', [])
+          assert isinstance(excluded, list) and len(excluded) in (0, 2)
+          assert k == 20 - len(excluded) and n == k * 100
+          assert len(manifest['valid']) == 256
           assert manifest['github_run_id'] == os.environ['GITHUB_RUN_ID']
           assert manifest['git_commit'] == os.environ['GITHUB_SHA']
           name = manifest['dataset_name']
