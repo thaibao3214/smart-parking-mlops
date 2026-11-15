@@ -1,5 +1,6 @@
 
 import io
+import hashlib
 import json
 import os
 import time
@@ -22,7 +23,14 @@ from mlflow.tracking import MlflowClient
 # ==========================================
 # 1. CAU HINH
 # ==========================================
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Works with main.py in either project/ or project/backend/.
+_THIS_DIR = Path(__file__).resolve().parent
+BASE_DIR = next(
+    (p for p in (_THIS_DIR, _THIS_DIR.parent)
+     if (p / "data" / "test" / "_annotations.coco.json").is_file()
+     or (p / "mobilenet_model").is_dir()),
+    _THIS_DIR,
+)
 DEVICE = torch.device("cpu")
 
 MODEL_NAME = "SmartParking-MobileNetV3-Small"
@@ -32,8 +40,11 @@ MODEL_URI = f"models:/{MODEL_NAME}@{MODEL_ALIAS}"
 CHECK_INTERVAL = 60
 BATCH_SIZE = 1
 
-TEST_DIR = BASE_DIR / "data" / "test"
-JSON_PATH = TEST_DIR / "_annotations.coco.json"
+COCO_SPLITS = ("test", "train")
+SIMULATION_MANIFESTS = (
+    BASE_DIR / "simulation_train" / "manifest.json",
+    BASE_DIR / "data" / "realtime_stream" / "manifest.json",
+)
 
 PATH_MAP = {
     "mobilenetv3": BASE_DIR / "mobilenet_model" / "mobilenet_v3_small_best.pth",
@@ -227,56 +238,115 @@ manager = ModelManager()
 
 
 # ==========================================
-# 5. LOAD COCO JSON MOT LAN
+# 5. COCO INDEX: TEST + TRAIN + SIMULATIONS
 # ==========================================
 def load_coco_index():
-    if not JSON_PATH.exists():
-        print("COCO JSON not found:", JSON_PATH)
-        return {}
+    """Index only ROIs (bounding boxes); NEVER use COCO class labels.
 
-    with open(JSON_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    images = {
-        image["id"]: image["file_name"]
-        for image in data.get("images", [])
-    }
-
+    Filename may repeat across train/test. Therefore each candidate stores its
+    own file path; /predict verifies raw file SHA256 before using its boxes.
+    """
     index = {}
+    source_lookup = {}
 
-    for annotation in data.get("annotations", []):
-        image_name = images.get(annotation["image_id"])
-
-        if image_name is None:
+    for split in COCO_SPLITS:
+        directory = BASE_DIR / "data" / split
+        annotation_path = directory / "_annotations.coco.json"
+        if not annotation_path.is_file():
+            print("COCO missing:", annotation_path)
             continue
+        coco = json.loads(annotation_path.read_text(encoding="utf-8"))
+        images = {int(row["id"]): row for row in coco.get("images", [])}
+        grouped = {}
+        for ann in coco.get("annotations", []):
+            if int(ann.get("category_id", -1)) not in (1, 2):
+                continue
+            grouped.setdefault(int(ann["image_id"]), []).append(ann["bbox"])
 
-        index.setdefault(image_name, []).append(
-            annotation["bbox"]
-        )
+        for image_id, image_info in images.items():
+            filename = Path(image_info["file_name"]).name
+            path = directory / filename
+            if not path.is_file():
+                continue
+            bboxes = grouped.get(image_id, [])
+            if not bboxes:
+                continue
+            row = {
+                "path": path,
+                "source_split": f"data/{split}",
+                "source_image": filename,
+                "bboxes": bboxes,
+                "width": int(image_info.get("width") or 640),
+                "height": int(image_info.get("height") or 640),
+            }
+            index.setdefault(filename, []).append(row)
+            source_lookup[(split, filename)] = row
 
+    # Generated simulation filenames (frame_001.jpg etc.) are not COCO names.
+    # Map them through the simulation manifest to the ORIGINAL train/test ROIs.
+    for manifest_path in list(SIMULATION_MANIFESTS) + sorted((BASE_DIR / 'simulation_batches').glob('*/manifest.json')):
+        if not manifest_path.is_file():
+            continue
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+        split = doc.get("source_split")
+        if split not in ("data/train", "data/test"):
+            # The historical manifest may not specify top-level source_split.
+            split = "data/test" if "realtime_stream" in str(manifest_path) else None
+        for entry in doc.get("images", []):
+            alias = Path(str(entry.get("file_name", ""))).name
+            original = Path(str(entry.get("source_file_name", alias))).name
+            row_split = entry.get("source_split", split)
+            if row_split not in ("data/train", "data/test"):
+                continue
+            source = source_lookup.get((row_split.split("/")[-1], original))
+            sim_file = manifest_path.parent / "images" / alias
+            if source is None or not sim_file.is_file():
+                continue
+            # Prefer manifest mapping for generated filenames. Match by content
+            # hash at request time, so a different image cannot borrow ROIs.
+            index.setdefault(alias, []).append({
+                **source,
+                "path": sim_file,
+            })
     return index
 
 
 coco_index = {}
 
 
+def resolve_image_annotations(filename, image_bytes):
+    candidates = coco_index.get(filename, [])
+    if not candidates:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No COCO ROI mapping for {filename}. Only indexed PKLot images are supported.",
+        )
+
+    actual_sha = hashlib.sha256(image_bytes).hexdigest()
+    for row in candidates:
+        if hashlib.sha256(row["path"].read_bytes()).hexdigest() == actual_sha:
+            return row
+
+    raise HTTPException(
+        status_code=422,
+        detail=("Uploaded image does not match its indexed PKLot frame. "
+                "Check the simulation manifest and original filename."),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app):
     global coco_index
-
     coco_index = load_coco_index()
-    print("COCO images indexed:", len(coco_index))
-
-    # Load model khi API khoi dong
+    print("COCO image names indexed:", len(coco_index))
     manager.load_registry_model(force=True)
-
     yield
 
 
 app = FastAPI(
     title="Smart Parking MLOps PKLot API",
-    version="4.0",
-    lifespan=lifespan
+    version="4.1",
+    lifespan=lifespan,
 )
 
 
@@ -315,107 +385,82 @@ def reload_model():
 @app.post("/predict")
 async def predict_parking(
     model_type: str = Form("mobilenetv3"),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
     if model_type not in PATH_MAP:
-        raise HTTPException(
-            status_code=400,
-            detail="Model type khong hop le"
-        )
+        raise HTTPException(status_code=400, detail="Invalid model type")
 
     image_name = Path(file.filename or "").name
-
-    if image_name not in coco_index:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Khong tim thay COCO annotations cho {image_name}"
-        )
+    if not image_name:
+        raise HTTPException(status_code=400, detail="Missing image filename")
 
     try:
         image_bytes = await file.read()
-        image_pil = Image.open(
-            io.BytesIO(image_bytes)
-        ).convert("RGB")
-
-        # Giu logic resize cua API cu
+        if not image_bytes:
+            raise ValueError("Empty image upload")
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image_pil = image.convert("RGB")
         image_pil = image_pil.resize((640, 640))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {exc}") from exc
 
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    # Only image bytes matching the indexed PKLot frames can receive COCO ROIs.
+    # No Empty/Occupied ground-truth label is read during prediction.
+    annotation = resolve_image_annotations(image_name, image_bytes)
 
     try:
         model, version, source = manager.get_model(model_type)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    bboxes = coco_index[image_name]
     valid_boxes = []
     tensors = []
-
-    for idx, bbox in enumerate(bboxes):
-        x, y, w, h = map(int, bbox)
-
-        xmin = max(0, x)
-        ymin = max(0, y)
-        xmax = min(640, x + w)
-        ymax = min(640, y + h)
-
+    # COCO bbox dimensions are in the original annotation coordinate space.
+    scale_x = 640 / annotation["width"]
+    scale_y = 640 / annotation["height"]
+    for idx, (x, y, w, h) in enumerate(annotation["bboxes"], start=1):
+        xmin = max(0, int(x * scale_x))
+        ymin = max(0, int(y * scale_y))
+        xmax = min(640, int((x + w) * scale_x))
+        ymax = min(640, int((y + h) * scale_y))
         if xmax - xmin <= 5 or ymax - ymin <= 5:
             continue
-
         crop = image_pil.crop((xmin, ymin, xmax, ymax))
         tensors.append(transform(crop))
-
         valid_boxes.append({
-            "id": idx + 1,
-            "box": [
-                xmin,
-                ymin,
-                xmax - xmin,
-                ymax - ymin
-            ]
+            "id": idx,
+            "box": [xmin, ymin, xmax - xmin, ymax - ymin],
         })
 
     predictions = []
     count_empty = 0
     count_occupied = 0
-
-    with torch.no_grad():
+    with torch.inference_mode():
         for start in range(0, len(tensors), BATCH_SIZE):
-            batch = torch.stack(
-                tensors[start:start + BATCH_SIZE]
-            ).to(DEVICE)
-
+            batch = torch.stack(tensors[start:start + BATCH_SIZE]).to(DEVICE)
             outputs = model(batch)
             labels = outputs.argmax(dim=1).tolist()
-
             for box_info, label in zip(
-                valid_boxes[start:start + BATCH_SIZE],
-                labels
+                valid_boxes[start:start + BATCH_SIZE], labels
             ):
                 status = "Occupied" if label == 1 else "Empty"
-
                 if label == 1:
                     count_occupied += 1
                 else:
                     count_empty += 1
-
-                predictions.append({
-                    **box_info,
-                    "status": status
-                })
+                predictions.append({**box_info, "status": status})
 
     total = count_empty + count_occupied
     rate = 100 * count_occupied / total if total else 0
-
     return {
         "model_used": model_type,
         "model_version": version,
         "model_source": source,
         "image_name": image_name,
+        "source_split": annotation["source_split"],
         "total_spaces": total,
         "occupied_spaces": count_occupied,
         "empty_spaces": count_empty,
         "occupancy_rate": round(rate, 2),
-        "predictions": predictions
+        "predictions": predictions,
     }
