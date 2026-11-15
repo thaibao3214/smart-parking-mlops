@@ -74,8 +74,8 @@ jobs:
                   'STAGE7_BATCH_ID': path.stem,
                   'STAGE7_SIM_DIR': f'simulation_batches/{name}',
                   'STAGE7_CONFIRMED_DIR': f'confirmed_batches/{name}',
-                  'STAGE7_SIM_POINTER': 'simulation_batches.dvc',
-                  'STAGE7_CONFIRMED_POINTER': 'confirmed_batches.dvc',
+                  'STAGE7_SIM_POINTER': f'simulation_batches/{name}.dvc',
+                  'STAGE7_CONFIRMED_POINTER': f'confirmed_batches/{name}.dvc',
               }
               with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
                   for k, v in vars.items():
@@ -97,8 +97,8 @@ jobs:
           PY
           dvc pull data.dvc -r origin --jobs 4
           if [[ -n "${STAGE7_BATCH_ID:-}" ]]; then
-            dvc pull simulation_batches.dvc -r origin --jobs 4
-            dvc pull confirmed_batches.dvc -r origin --jobs 4
+            dvc pull "$STAGE7_SIM_POINTER" -r origin --jobs 4
+            dvc pull "$STAGE7_CONFIRMED_POINTER" -r origin --jobs 4
           else
             dvc pull simulation_train.dvc -r origin --jobs 4
             dvc pull confirmed_train_sim.dvc -r origin --jobs 4
