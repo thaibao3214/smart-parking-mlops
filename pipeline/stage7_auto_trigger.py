@@ -32,7 +32,7 @@ def paths_for(batch):
     if not re.fullmatch(r'batch_[0-9]{3,6}', batch):
         raise ValueError('Expected batch_002, batch_003, ...')
     return (ROOT / 'simulation_batches' / batch, ROOT / 'confirmed_batches' / batch,
-            'simulation_batches.dvc', 'confirmed_batches.dvc')
+            f'simulation_batches/{batch}.dvc', f'confirmed_batches/{batch}.dvc')
 
 
 def verify(batch):
@@ -157,7 +157,12 @@ def dispatch(batch, dry_run):
     batch['online_dvc_sha256'] = checksum(ROOT / conf_ptr)
     BATCHES.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps(batch, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-    run('git', 'add', '--', sim_ptr, conf_ptr, marker.relative_to(ROOT).as_posix())
+    git_files = [sim_ptr, conf_ptr, marker.relative_to(ROOT).as_posix()]
+    # DVC may create directory-level .gitignore files when tracking a new batch.
+    for ignore in ('simulation_batches/.gitignore', 'confirmed_batches/.gitignore'):
+        if (ROOT / ignore).is_file():
+            git_files.append(ignore)
+    run('git', 'add', '--', *git_files)
     run('git', 'commit', '-m', f"Stage7 TEST_ONLY confirmed batch {batch['batch_id']}")
     run('git', 'push', 'github', 'HEAD:main')
     print('STAGE7_AUTO_TRIGGER_PUSH_PASS:', batch['batch_id'])
