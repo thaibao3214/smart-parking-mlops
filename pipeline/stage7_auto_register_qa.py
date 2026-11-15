@@ -65,6 +65,48 @@ def verify(root=Path('.')):
     return report, train, manifest, winner
 
 
+
+def log_dataset_lineage(mlflow, manifest):
+    """Log the exact sample-index metadata for each DVC-backed dataset.
+
+    This records file/label/checksum metadata, not raw images. It does not
+    claim the dataset is an external camera capture.
+    """
+    import pandas as pd
+
+    commit = manifest['git_commit']
+    checksums = {
+        'training': manifest['online_dvc_sha256'],
+        'validation': manifest['data_dvc_sha256'],
+    }
+    sources = {
+        'training': 'confirmed_train_sim.dvc',
+        'validation': 'data.dvc',
+    }
+    for context, key in (('training', 'train'), ('validation', 'valid')):
+        records = manifest[key]
+        if not records:
+            raise ValueError('Empty dataset split: ' + key)
+        data = pd.DataFrame([{
+            'file': str(r['file']),
+            'label': int(r['label']),
+            'crop_sha256': str(r['sha256']),
+            'source_frame': str(r['source_frame']),
+        } for r in records])
+        uri = (f'https://github.com/thaibao3214/smart-parking-mlops/'
+               f'blob/{commit}/{sources[context]}')
+        dataset = mlflow.data.from_pandas(
+            data,
+            source=uri,
+            name=f'stage7-{key}-pklot-{manifest["github_run_id"]}',
+            targets='label',
+        )
+        mlflow.log_input(dataset, context=context)
+        mlflow.set_tag(f'{context}_dvc_pointer', sources[context])
+        mlflow.set_tag(f'{context}_dvc_pointer_sha256', checksums[context])
+        print(f'STAGE7_MLFLOW_DATASET_LOGGED: {context} {len(records)}')
+
+
 def register(report, train, manifest, winner, root=Path('.')):
     import torch
     import mlflow
@@ -120,6 +162,7 @@ def register(report, train, manifest, winner, root=Path('.')):
         mlflow.log_params({'model': winner, 'train_samples': len(manifest['train']),
                            'valid_samples': len(manifest['valid']),
                            'online_dvc_sha256': manifest['online_dvc_sha256']})
+        log_dataset_lineage(mlflow, manifest)
         mlflow.log_metrics({'candidate_macro_f1': row['candidate']['macro_f1'],
                             'candidate_accuracy': row['candidate']['accuracy'],
                             'cpu_forward_p95_ms': row['latency']['cpu_forward_p95_ms']})
