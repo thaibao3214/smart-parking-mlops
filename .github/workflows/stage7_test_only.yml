@@ -2,6 +2,11 @@ name: Smart Parking - Stage 7 TEST ONLY GPU Integration
 
 on:
   workflow_dispatch:
+    inputs:
+      batch_id:
+        description: 'Existing TEST_ONLY batch ID (leave blank for legacy)'
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -46,43 +51,69 @@ jobs:
           python -m py_compile pipeline/stage7_test_prepare.py pipeline/stage7_exclude_frame.py pipeline/stage7_gate.py pipeline/stage7_test_log.py pipeline/stage7_auto_register_qa.py kaggle/stage7_test_train.py
           echo STAGE7_TEST_ONLY_DEPS_PASS
 
-      - name: Resolve immutable batch marker for push event
+      - name: Resolve immutable batch marker
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PYCODE'
-          import json, os, subprocess
+          import json, os, re, subprocess
           from pathlib import Path
-          if os.environ.get('GITHUB_EVENT_NAME') != 'push':
-              print('STAGE7_WORKFLOW_DISPATCH_LEGACY_MODE')
+
+          if os.environ['GITHUB_EVENT_NAME'] == 'push':
+              markers = [
+                  x for x in subprocess.check_output(
+                      ['git', 'diff-tree', '--no-commit-id',
+                       '--name-only', '-r', 'HEAD'], text=True
+                  ).splitlines()
+                  if x.startswith('pipeline/stage7_batches/')
+                  and x.endswith('.json')
+              ]
           else:
-              changed = subprocess.check_output(
-                  ['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], text=True
-              ).splitlines()
-              markers = [p for p in changed if p.startswith('pipeline/stage7_batches/') and p.endswith('.json')]
+              event = json.loads(
+                  Path(os.environ['GITHUB_EVENT_PATH'])
+                  .read_text(encoding='utf-8')
+              )
+              batch_id = str(
+                  (event.get('inputs') or {}).get('batch_id') or ''
+              ).strip()
+              if batch_id:
+                  if not re.fullmatch(r'[0-9a-f]{20}', batch_id):
+                      raise ValueError('Invalid batch ID')
+                  markers = [
+                      f'pipeline/stage7_batches/{batch_id}.json'
+                  ]
+              else:
+                  markers = []
+                  print('STAGE7_WORKFLOW_DISPATCH_LEGACY_MODE')
+
+          if markers:
               if len(markers) != 1:
-                  raise ValueError('Expected exactly one batch marker in triggering commit')
-              path = Path(markers[0]); m = json.loads(path.read_text(encoding='utf-8'))
+                  raise ValueError('Expected exactly one batch marker')
+              path = Path(markers[0])
+              m = json.loads(path.read_text(encoding='utf-8'))
               name = m.get('batch_name')
-              if name == 'legacy':
-                  raise ValueError('Old batch must not be retriggered by a new commit')
-              if not isinstance(name, str) or not __import__('re').fullmatch(r'batch_[0-9]{3,6}', name):
-                  raise ValueError('Malformed batch name')
-              if m.get('batch_id') != path.stem or m.get('production_approved') is not False:
-                  raise ValueError('Invalid marker provenance')
-              vars = {
+
+              if not isinstance(name, str) or not re.fullmatch(
+                  r'batch_[0-9]{3,6}', name
+              ):
+                  raise ValueError('Invalid batch name')
+              if (m.get('batch_id') != path.stem or
+                  m.get('production_approved') is not False):
+                  raise ValueError('Invalid TEST_ONLY marker')
+
+              variables = {
                   'STAGE7_BATCH_ID': path.stem,
                   'STAGE7_SIM_DIR': f'simulation_batches/{name}',
                   'STAGE7_CONFIRMED_DIR': f'confirmed_batches/{name}',
                   'STAGE7_SIM_POINTER': f'simulation_batches/{name}.dvc',
                   'STAGE7_CONFIRMED_POINTER': f'confirmed_batches/{name}.dvc',
               }
-              with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
-                  for k, v in vars.items():
+              with open(os.environ['GITHUB_ENV'], 'a',
+                        encoding='utf-8') as f:
+                  for k, v in variables.items():
                       f.write(f'{k}={v}\n')
               print('STAGE7_RESOLVED_IMMUTABLE_BATCH:', name, path.stem)
           PYCODE
-
       - name: DVC pull PKLot version and 3 baseline checkpoints
         shell: bash
         run: |
