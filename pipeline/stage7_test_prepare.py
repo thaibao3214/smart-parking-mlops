@@ -85,6 +85,17 @@ def confirmed_rows():
     return rows
 
 
+
+def dvc_checksum_matches(expected, path):
+    raw = Path(path).read_bytes()
+    lf = raw.replace(b'\r\n', b'\n')
+    crlf = lf.replace(b'\n', b'\r\n')
+    return expected in {
+        hashlib.sha256(raw).hexdigest(),
+        hashlib.sha256(lf).hexdigest(),
+        hashlib.sha256(crlf).hexdigest(),
+    }
+
 def main():
     if not os.environ.get('GITHUB_RUN_ID') or not os.environ.get('GITHUB_SHA'):
         raise ValueError('Only package from GitHub Actions')
@@ -96,8 +107,8 @@ def main():
         marker = json.loads(batch_marker.read_text(encoding='utf-8'))
         if (marker.get('batch_id') != BATCH_ID or marker.get('batch_name') != SIM.name or
                 marker.get('sim_pointer') != SIM_POINTER or marker.get('confirmed_pointer') != CONF_POINTER or
-                marker.get('sim_dvc_sha256') != sha256(SIM_POINTER) or
-                marker.get('online_dvc_sha256') != sha256(CONF_POINTER) or
+                not dvc_checksum_matches(marker.get('sim_dvc_sha256'), SIM_POINTER) or
+                not dvc_checksum_matches(marker.get('online_dvc_sha256'), CONF_POINTER) or
                 marker.get('production_approved') is not False):
             raise ValueError('Source batch marker/DVC pointer mismatch: fail closed')
         current_manifest = json.loads((SIM / 'manifest.json').read_text(encoding='utf-8'))
