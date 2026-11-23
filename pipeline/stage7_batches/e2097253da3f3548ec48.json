@@ -1,0 +1,21 @@
+{
+  "batch_id": "e2097253da3f3548ec48",
+  "batch_name": "batch_003",
+  "origin": "pklot_train_simulation",
+  "mode": "TEST_ONLY_NO_PROMOTION",
+  "frames": 18,
+  "crops": 1800,
+  "class_counts": {
+    "Empty": 1054,
+    "Occupied": 746
+  },
+  "excluded_source_image_ids": [
+    "3220",
+    "5257"
+  ],
+  "sim_pointer": "simulation_batches/batch_003.dvc",
+  "confirmed_pointer": "confirmed_batches/batch_003.dvc",
+  "production_approved": false,
+  "sim_dvc_sha256": "06e7787d142abf9b4e058d9f3c12728e62c0a99fc8967c768f1bf61f35c2dc2c",
+  "online_dvc_sha256": "54a08e51712210ed7115d6734ea78e50794220afe473a7cd16a465156d9bb644"
+}
