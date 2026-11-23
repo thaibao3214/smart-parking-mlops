@@ -17,8 +17,8 @@ def load_exclusions(sim, confirmed, manifest):
             or doc['test_only'] is not True or doc['review_method'] != 'manual_quality_review'):
         raise ValueError('Invalid exclusion record')
     items = doc['excluded_frames']
-    if not isinstance(items, list) or len(items) != 2:
-        raise ValueError('Expected exactly two manually excluded frames')
+    if not isinstance(items, list) or not (1 <= len(items) <= 2):
+        raise ValueError('Expected one or two manually excluded frames')
     mapping = {(str(r['image_id']), r['file_name']) for r in manifest['images']}
     excluded = set()
     for item in items:
@@ -28,7 +28,7 @@ def load_exclusions(sim, confirmed, manifest):
         if pair not in mapping or len(item['reason'].strip()) < 8:
             raise ValueError('Excluded frame not in manifest / missing reason')
         excluded.add(pair[0])
-    if len(excluded) != 2:
+    if len(excluded) != len(items):
         raise ValueError('Duplicated excluded frame')
     return excluded
 
@@ -43,11 +43,11 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r'batch_[0-9]{3,6}', args.batch):
         parser.error('Invalid batch name')
-    if len(args.frame) != 2 or len(set(args.frame)) != 2 or any(
+    if not (1 <= len(args.frame) <= 2) or len(set(args.frame)) != len(args.frame) or any(
         not re.fullmatch(r'frame_[0-9]{3,6}\.(?:jpg|jpeg|png)', f, flags=re.I)
         for f in args.frame
     ):
-        parser.error('Provide exactly two distinct frame filenames')
+        parser.error('Provide one or two distinct frame filenames')
     if len(args.reason.strip()) < 8:
         parser.error('Provide a meaningful exclusion reason')
     sim = ROOT / 'simulation_batches' / args.batch
@@ -73,13 +73,13 @@ def main():
     }
     print('EXCLUSIONS_PREVIEW:', json.dumps(doc, ensure_ascii=False))
     if not args.confirm:
-        print('DRY_RUN_ONLY: add --confirm after reviewing both exclusions')
+        print('DRY_RUN_ONLY: add --confirm after reviewing exclusions')
         return
     confirmed.mkdir(parents=True, exist_ok=True)
     with target.open('x', encoding='utf-8') as out:
         json.dump(doc, out, indent=2, ensure_ascii=False)
         out.write('\n')
-    print('STAGE7_TWO_FRAMES_EXCLUDED_PASS')
+    print('STAGE7_EXCLUSIONS_PASS:', len(args.frame))
     print('Original frames and any manual labels remain intact')
 
 
