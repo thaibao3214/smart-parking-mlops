@@ -22,7 +22,7 @@ concurrency:
 jobs:
   test-only:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
@@ -223,7 +223,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p stage7_test_logs
-          for i in $(seq 1 200); do
+          for i in $(seq 1 360); do
             if ! status=$(kaggle kernels status "$KERNEL_SLUG" 2>&1); then
               echo "$status"; echo ERROR > stage7_test_logs/status.txt; break
             fi
@@ -236,6 +236,10 @@ jobs:
           done
           test -s stage7_test_logs/status.txt || echo TIMEOUT > stage7_test_logs/status.txt
           cat stage7_test_logs/status.txt
+          if [[ "$(cat stage7_test_logs/status.txt)" != "COMPLETE" ]]; then
+            echo "STAGE7_KAGGLE_NOT_COMPLETE: $(cat stage7_test_logs/status.txt)" >&2
+            exit 1
+          fi
 
       - name: Download and verify Kaggle candidates
         shell: bash
