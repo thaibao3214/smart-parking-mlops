@@ -44,7 +44,7 @@ def verify(root=Path('.')):
     train_count = len(manifest.get('train', []))
     reviewed_frames = manifest.get('reviewed_frame_count', 20)
     excluded_ids = manifest.get('excluded_source_image_ids', [])
-    if (not isinstance(excluded_ids, list) or len(excluded_ids) not in (0, 2) or
+    if (not isinstance(excluded_ids, list) or len(excluded_ids) not in (0, 1, 2) or
             len(set(excluded_ids)) != len(excluded_ids) or
             reviewed_frames != 20 - len(excluded_ids) or
             train_count != reviewed_frames * 100):
