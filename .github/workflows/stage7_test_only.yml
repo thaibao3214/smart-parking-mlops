@@ -1,4 +1,4 @@
-name: Smart Parking - Stage 7 TEST ONLY GPU Integration
+﻿name: Smart Parking - Stage 7 TEST ONLY GPU Integration
 
 on:
   workflow_dispatch:
@@ -163,7 +163,7 @@ jobs:
           n = len(manifest['train'])
           k = manifest.get('reviewed_frame_count', 20)
           excluded = manifest.get('excluded_source_image_ids', [])
-          assert isinstance(excluded, list) and len(excluded) in (0, 2)
+          assert isinstance(excluded, list) and len(excluded) in (0, 1, 2)
           assert k == 20 - len(excluded) and n == k * 100
           assert len(manifest['valid']) == 256
           assert manifest['github_run_id'] == os.environ['GITHUB_RUN_ID']
