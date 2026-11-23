@@ -133,6 +133,35 @@ def run(*args):
     subprocess.run(args, cwd=ROOT, check=True)
 
 
+SYNC_CRITICAL_PATHS = (
+    '.github/workflows/stage7_test_only.yml',
+    'pipeline/stage7_exclude_frame.py',
+    'pipeline/stage7_test_prepare.py',
+    'pipeline/stage7_auto_trigger.py',
+    'pipeline/stage7_gate.py',
+    'pipeline/stage7_auto_register_qa.py',
+    'kaggle/stage7_test_train.py',
+)
+
+
+def verify_code_ready():
+    """Refuse to submit batch with local, uncommitted training/validation changes."""
+    dirty = subprocess.check_output(
+        ['git', 'status', '--porcelain', '--', *SYNC_CRITICAL_PATHS],
+        cwd=ROOT, text=True, encoding='utf-8', errors='replace',
+    ).strip()
+    if dirty:
+        raise RuntimeError(
+            'Stage7 code has uncommitted changes. Commit and push these files first:\n' + dirty
+        )
+    workflow = (ROOT / '.github/workflows/stage7_test_only.yml').read_text(encoding='utf-8-sig')
+    if ('len(excluded) in (0, 1, 2)' not in workflow or
+            "required: true" not in workflow or
+            'STAGE7_WORKFLOW_DISPATCH_LEGACY_MODE' in workflow):
+        raise RuntimeError('Stage7 workflow is outdated; sync the unified Stage7 policy before retraining')
+    return True
+
+
 def dispatch(batch, dry_run):
     marker = BATCHES / (batch['batch_id'] + '.json')
     if marker.exists():
@@ -142,6 +171,7 @@ def dispatch(batch, dry_run):
     if dry_run:
         print('STAGE7_DRY_RUN_NO_CHANGES')
         return
+    verify_code_ready()
     staged = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], cwd=ROOT, text=True)
     if staged.strip():
         raise RuntimeError('Git index not empty; commit or unstage unrelated changes first:\n' + staged)

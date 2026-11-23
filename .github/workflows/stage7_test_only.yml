@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       batch_id:
-        description: 'Existing TEST_ONLY batch ID (leave blank for legacy)'
-        required: false
+        description: 'Required: immutable TEST_ONLY batch ID (20 hex chars); no legacy mode'
+        required: true
         type: string
   push:
     branches: [main]
@@ -76,19 +76,13 @@ jobs:
               batch_id = str(
                   (event.get('inputs') or {}).get('batch_id') or ''
               ).strip()
-              if batch_id:
-                  if not re.fullmatch(r'[0-9a-f]{20}', batch_id):
-                      raise ValueError('Invalid batch ID')
-                  markers = [
-                      f'pipeline/stage7_batches/{batch_id}.json'
-                  ]
-              else:
-                  markers = []
-                  print('STAGE7_WORKFLOW_DISPATCH_LEGACY_MODE')
+              if not re.fullmatch(r'[0-9a-f]{20}', batch_id):
+                  raise ValueError('Manual Stage 7 run requires an existing 20-character batch ID')
+              markers = [f'pipeline/stage7_batches/{batch_id}.json']
 
+          if len(markers) != 1:
+              raise ValueError('Expected exactly one immutable TEST_ONLY batch marker')
           if markers:
-              if len(markers) != 1:
-                  raise ValueError('Expected exactly one batch marker')
               path = Path(markers[0])
               m = json.loads(path.read_text(encoding='utf-8'))
               name = m.get('batch_name')
@@ -164,7 +158,9 @@ jobs:
           k = manifest.get('reviewed_frame_count', 20)
           excluded = manifest.get('excluded_source_image_ids', [])
           assert isinstance(excluded, list) and len(excluded) in (0, 1, 2)
+          assert len(set(str(x) for x in excluded)) == len(excluded)
           assert k == 20 - len(excluded) and n == k * 100
+          assert (not os.environ.get('STAGE7_BATCH_ID')) or manifest['batch_name'].startswith('batch_')
           assert len(manifest['valid']) == 256
           assert manifest['github_run_id'] == os.environ['GITHUB_RUN_ID']
           assert manifest['git_commit'] == os.environ['GITHUB_SHA']
