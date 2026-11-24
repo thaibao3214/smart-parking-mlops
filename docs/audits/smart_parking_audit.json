@@ -1,0 +1,260 @@
+{
+  "audit_utc": "2026-11-14T00:30:05.940935+00:00",
+  "project_root": "C:\\Users\\thaib\\Downloads\\project",
+  "audit_mode": "read-only, offline, no credentials collected, no inference/training executed",
+  "git": {
+    "repository_detected": true,
+    "branch": "main",
+    "commit": "a49d3fb",
+    "last_commit_message": "feat: Stage 7 continuous training and controlled deployment",
+    "working_tree_changed_count": 18,
+    "remote_names_and_sanitized_urls": [
+      {
+        "name": "github",
+        "url_sanitized": "https://github.com/thaibao3214/smart-parking-mlops.git"
+      },
+      {
+        "name": "github",
+        "url_sanitized": "https://github.com/thaibao3214/smart-parking-mlops.git"
+      },
+      {
+        "name": "origin",
+        "url_sanitized": "https://dagshub.com/thaibao3214/smart-parking-mlops.git"
+      },
+      {
+        "name": "origin",
+        "url_sanitized": "https://dagshub.com/thaibao3214/smart-parking-mlops.git"
+      }
+    ],
+    "note": "Offline audit cannot confirm the latest commit is pushed or GitHub Actions completed."
+  },
+  "stages": {
+    "1": {
+      "source_files_present": [
+        ".github/workflows/dvc_stage1.yml"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    },
+    "2": {
+      "source_files_present": [
+        ".github/workflows/stage2_smoke.yml",
+        "pipeline/prepare_stage2.py",
+        "kaggle/stage2_smoke.py"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    },
+    "3": {
+      "source_files_present": [
+        ".github/workflows/stage3_finetune.yml",
+        "kaggle/stage3_finetune.py"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    },
+    "4": {
+      "source_files_present": [
+        ".github/workflows/stage4_two_models.yml",
+        "kaggle/stage4_two_models.py"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    },
+    "5": {
+      "source_files_present": [
+        ".github/workflows/stage5_mlflow_gate.yml",
+        "pipeline/stage5_evaluate.py"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    },
+    "6": {
+      "source_files_present": [
+        ".github/workflows/stage6_independent_eval.yml",
+        "pipeline/stage6_evaluate.py"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    },
+    "7": {
+      "source_files_present": [
+        ".github/workflows/stage7_continuous_training.yml",
+        "pipeline/stage7_prepare.py",
+        "pipeline/stage7_gate.py",
+        "pipeline/stage7_promote.py",
+        "kaggle/stage7_train.py"
+      ],
+      "missing_source_files": [],
+      "code_present": true,
+      "run_verified_by_this_audit": false
+    }
+  },
+  "workflows": {
+    ".github/workflows/dvc_stage1.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": false,
+      "approved_online_pointer_mentioned": false,
+      "uses_kaggle": false,
+      "uses_dvc": true,
+      "uses_mlflow": false,
+      "upload_artifact_mentioned": true
+    },
+    ".github/workflows/stage2_smoke.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": false,
+      "approved_online_pointer_mentioned": false,
+      "uses_kaggle": true,
+      "uses_dvc": true,
+      "uses_mlflow": false,
+      "upload_artifact_mentioned": true
+    },
+    ".github/workflows/stage3_finetune.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": false,
+      "approved_online_pointer_mentioned": false,
+      "uses_kaggle": true,
+      "uses_dvc": true,
+      "uses_mlflow": false,
+      "upload_artifact_mentioned": true
+    },
+    ".github/workflows/stage4_two_models.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": false,
+      "approved_online_pointer_mentioned": false,
+      "uses_kaggle": true,
+      "uses_dvc": true,
+      "uses_mlflow": false,
+      "upload_artifact_mentioned": true
+    },
+    ".github/workflows/stage5_mlflow_gate.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": false,
+      "approved_online_pointer_mentioned": false,
+      "uses_kaggle": false,
+      "uses_dvc": false,
+      "uses_mlflow": true,
+      "upload_artifact_mentioned": true
+    },
+    ".github/workflows/stage6_independent_eval.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": false,
+      "approved_online_pointer_mentioned": false,
+      "uses_kaggle": false,
+      "uses_dvc": true,
+      "uses_mlflow": true,
+      "upload_artifact_mentioned": true
+    },
+    ".github/workflows/stage7_continuous_training.yml": {
+      "exists": true,
+      "manual_dispatch_mentioned": true,
+      "push_event_mentioned": true,
+      "approved_online_pointer_mentioned": true,
+      "uses_kaggle": true,
+      "uses_dvc": true,
+      "uses_mlflow": true,
+      "upload_artifact_mentioned": true
+    }
+  },
+  "dvc": {
+    "dvc_config_exists": true,
+    "data_pointer": {
+      "exists": true,
+      "size_bytes": 116
+    },
+    "approved_online_pointer": {
+      "exists": false,
+      "size_bytes": null
+    },
+    "model_pointers": {
+      "mobilenetv3": {
+        "exists": true,
+        "size_bytes": 115
+      },
+      "resnet18": {
+        "exists": true,
+        "size_bytes": 106
+      },
+      "custom_cnn": {
+        "exists": true,
+        "size_bytes": 117
+      }
+    },
+    "note": "Does not run dvc pull/push; remote availability is not verified."
+  },
+  "models": {
+    "mobilenetv3": {
+      "exists": true,
+      "size_bytes": 6217527
+    },
+    "resnet18": {
+      "exists": true,
+      "size_bytes": 44790155
+    },
+    "custom_cnn": {
+      "exists": true,
+      "size_bytes": 4856230
+    }
+  },
+  "dataset": {
+    "data_directory_exists": true,
+    "train_image_files": 8691,
+    "valid_image_files": 2483,
+    "val_image_files": null,
+    "test_image_files": 1242,
+    "possible_annotation_json": [
+      "data/realtime_stream/_annotations.coco.json",
+      "data/test/_annotations.coco.json",
+      "data/train/_annotations.coco.json",
+      "data/valid/_annotations.coco.json"
+    ]
+  },
+  "online": {
+    "manifest_exists": true,
+    "manifest_frames": 20,
+    "prediction_files": 20,
+    "confirmed_frames": 20,
+    "confirmed_crops": 2000,
+    "confirmed_label_counts": {
+      "Empty": 989,
+      "Occupied": 1011,
+      "unknown": 0
+    },
+    "invalid_label_files": 0,
+    "distinct_source_images": 20,
+    "source_note": "Prior project context: simulated online frames originate from PKLot test; do not train on these and evaluate on unchanged PKLot test.",
+    "approved_online": {
+      "directory_exists": false,
+      "dvc_pointer_exists": false,
+      "manifest_exists": false,
+      "image_count": null,
+      "manifest_top_level_keys": []
+    }
+  },
+  "local_artifact_zips": [],
+  "mlflow": {
+    "mlflow_tracking_uri_env_present": false,
+    "dagshub_token_env_present": false,
+    "kaggle_token_env_present": false,
+    "remote_tracking_verified": false,
+    "note": "Credential values and MLflow server are deliberately not accessed."
+  },
+  "findings": [
+    "No approved_online.dvc pointer found: Stage 7 auto-trigger data batch not yet evidenced locally.",
+    "Confirmed online simulation data exists; do not reuse PKLot test-derived crops for training evaluated on PKLot test.",
+    "No Stage artifact ZIP found in top-level/outputs/artifacts/downloads folders; GitHub artifacts may exist remotely.",
+    "Source-code presence does not prove Stage 7 end-to-end success; verify GitHub Actions/Kaggle/MLflow and approval/rollback separately."
+  ]
+}

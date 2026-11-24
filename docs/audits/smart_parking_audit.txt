@@ -1,0 +1,43 @@
+SMART PARKING MLOPS — PROJECT AUDIT
+==================================================
+UTC: 2026-11-14T00:30:05.940935+00:00
+Root: C:\Users\thaib\Downloads\project
+Git: branch=main commit=a49d3fb changed=18
+
+STAGE FILES (presence != successful execution)
+Stage 1: FILES_OK
+Stage 2: FILES_OK
+Stage 3: FILES_OK
+Stage 4: FILES_OK
+Stage 5: FILES_OK
+Stage 6: FILES_OK
+Stage 7: FILES_OK
+
+CHECKPOINTS
+mobilenetv3: pth=True (5.93 MB), dvc_pointer=True
+resnet18: pth=True (42.72 MB), dvc_pointer=True
+custom_cnn: pth=True (4.63 MB), dvc_pointer=True
+
+DATASET
+data/: True
+train images: 8691, valid: 2483, val: None, test: 1242
+
+ONLINE SIMULATION
+manifest frames: 20
+predictions: 20
+confirmed frames: 20
+confirmed crops: 2000
+labels: {'Empty': 989, 'Occupied': 1011, 'unknown': 0}
+approved_online exists: False
+approved_online.dvc exists: False
+
+LOCAL ARTIFACT ZIP FILES
+(none found in searched locations)
+
+FINDINGS
+- No approved_online.dvc pointer found: Stage 7 auto-trigger data batch not yet evidenced locally.
+- Confirmed online simulation data exists; do not reuse PKLot test-derived crops for training evaluated on PKLot test.
+- No Stage artifact ZIP found in top-level/outputs/artifacts/downloads folders; GitHub artifacts may exist remotely.
+- Source-code presence does not prove Stage 7 end-to-end success; verify GitHub Actions/Kaggle/MLflow and approval/rollback separately.
+
+NOTE: This audit does not access secrets, trigger jobs, modify project data or verify remote runs.

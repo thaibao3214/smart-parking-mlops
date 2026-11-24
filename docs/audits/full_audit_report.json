@@ -1,0 +1,392 @@
+{
+  "audit_time_local": "2026-11-24T06:50:01+07:00",
+  "root": "C:\\Users\\thaib\\Downloads\\project",
+  "scope": "Read-only static evidence audit, not a functional end-to-end test",
+  "counts": {
+    "scanned_files": 22453,
+    "python_files": 76,
+    "directories_top_level": 23
+  },
+  "summary": {
+    "CO_THANH_PHAN": 12,
+    "MOT_PHAN": 1
+  },
+  "sections": [
+    {
+      "name": "01 - Dataset / COCO",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 3,
+      "signals_total": 3,
+      "checks": [
+        {
+          "item": "data",
+          "found": true
+        },
+        {
+          "item": "COCO annotations",
+          "found": true
+        },
+        {
+          "item": "Dataset verification script",
+          "found": true
+        }
+      ],
+      "note": "Presence only; dataset quality and label accuracy require manual validation."
+    },
+    {
+      "name": "02 - Data versioning (DVC)",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 3,
+      "signals_total": 3,
+      "checks": [
+        {
+          "item": ".dvc",
+          "found": true
+        },
+        {
+          "item": "data.dvc",
+          "found": true
+        },
+        {
+          "item": "Other DVC-tracked datasets",
+          "found": true
+        }
+      ],
+      "note": "Does not execute dvc pull or verify remote."
+    },
+    {
+      "name": "03 - Model implementations",
+      "status": "MOT_PHAN",
+      "signals_met": 3,
+      "signals_total": 4,
+      "checks": [
+        {
+          "item": "cnn_model",
+          "found": true
+        },
+        {
+          "item": "mobilenet_model",
+          "found": true
+        },
+        {
+          "item": "resnet_model",
+          "found": true
+        },
+        {
+          "item": "Model-related Python files",
+          "found": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "04 - MLflow / Registry / DagsHub",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 2,
+      "signals_total": 2,
+      "checks": [
+        {
+          "item": "MLflow setup or registration",
+          "found": true
+        },
+        {
+          "item": "MLflow or registry tests",
+          "found": true
+        }
+      ],
+      "note": "No remote authentication/MLflow API calls; production alias not verified live."
+    },
+    {
+      "name": "05 - API / Inference",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 2,
+      "signals_total": 2,
+      "checks": [
+        {
+          "item": "api",
+          "found": true
+        },
+        {
+          "item": "API Python code",
+          "found": true
+        }
+      ],
+      "note": "No request sent to API; endpoints and latency are not verified."
+    },
+    {
+      "name": "06 - Streamlit dashboard",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 3,
+      "signals_total": 3,
+      "checks": [
+        {
+          "item": "dashboard/app.py",
+          "found": true
+        },
+        {
+          "item": "Dashboard additional modules",
+          "found": true
+        },
+        {
+          "item": "Streamlit usage",
+          "found": true,
+          "files": [
+            "dashboard/app.py"
+          ]
+        }
+      ],
+      "note": "Static evidence only; dashboard is not launched."
+    },
+    {
+      "name": "07 - Online streaming / feedback",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 2,
+      "signals_total": 2,
+      "checks": [
+        {
+          "item": "dashboard/online_stream.py",
+          "found": true
+        },
+        {
+          "item": "Batch data folders",
+          "found": true
+        }
+      ],
+      "note": "Confirmed batches may be simulated; do not assume real camera data."
+    },
+    {
+      "name": "08 - Retraining",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 3,
+      "signals_total": 3,
+      "checks": [
+        {
+          "item": "retraining/retrain.py",
+          "found": true
+        },
+        {
+          "item": "retraining/evaluate.py",
+          "found": true
+        },
+        {
+          "item": "Retraining readiness checker",
+          "found": true
+        }
+      ],
+      "note": "No retraining triggered; readiness and execution are distinct."
+    },
+    {
+      "name": "09 - Stage 5 and 6 evaluation",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 3,
+      "signals_total": 3,
+      "checks": [
+        {
+          "item": "pipeline/stage5_evaluate.py",
+          "found": true
+        },
+        {
+          "item": "pipeline/stage6_evaluate.py",
+          "found": true
+        },
+        {
+          "item": "Stage 5/6 docs",
+          "found": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "10 - Stage 7 continuous training / gate",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 5,
+      "signals_total": 5,
+      "checks": [
+        {
+          "item": "pipeline/stage7_prepare.py",
+          "found": true
+        },
+        {
+          "item": "pipeline/stage7_gate.py",
+          "found": true
+        },
+        {
+          "item": "pipeline/stage7_promote.py",
+          "found": true
+        },
+        {
+          "item": "Stage 7 automatic trigger",
+          "found": true
+        },
+        {
+          "item": "Stage 7 docs",
+          "found": true
+        }
+      ],
+      "note": "Gate files existing does not imply gate passed. Promotion must remain human-approved."
+    },
+    {
+      "name": "11 - Stage 7 UI controls and QA",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 4,
+      "signals_total": 4,
+      "checks": [
+        {
+          "item": "dashboard/stage7_control.py",
+          "found": true
+        },
+        {
+          "item": "dashboard/stage7_control_worker.py",
+          "found": true
+        },
+        {
+          "item": "Human review actions",
+          "found": true
+        },
+        {
+          "item": "QA scripts",
+          "found": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "12 - CI/CD GitHub Actions",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 2,
+      "signals_total": 2,
+      "checks": [
+        {
+          "item": ".github",
+          "found": true
+        },
+        {
+          "item": "Workflow definitions",
+          "found": true
+        }
+      ],
+      "note": "Workflow status in GitHub is NOT checked."
+    },
+    {
+      "name": "13 - Tests and documentation",
+      "status": "CO_THANH_PHAN",
+      "signals_met": 3,
+      "signals_total": 3,
+      "checks": [
+        {
+          "item": "requirements.txt",
+          "found": true
+        },
+        {
+          "item": "Test Python files",
+          "found": true
+        },
+        {
+          "item": "README docs",
+          "found": true
+        }
+      ],
+      "note": "Tests not executed."
+    }
+  ],
+  "missing_evidence": [
+    "03 - Model implementations: Model-related Python files"
+  ],
+  "python_syntax": {
+    "parsed": 76,
+    "total": 76,
+    "syntax_errors": []
+  },
+  "coco_examples": [
+    {
+      "file": "data/realtime_stream/_annotations.coco.json",
+      "status": "readable",
+      "images": 20,
+      "annotations": 2000,
+      "categories": {
+        "0": "spaces",
+        "1": "space-empty",
+        "2": "space-occupied"
+      },
+      "annotation_counts": {
+        "1": 987,
+        "2": 1013
+      }
+    },
+    {
+      "file": "data/test/_annotations.coco.json",
+      "status": "skipped_large"
+    },
+    {
+      "file": "data/train/_annotations.coco.json",
+      "status": "skipped_large"
+    },
+    {
+      "file": "data/valid/_annotations.coco.json",
+      "status": "skipped_large"
+    }
+  ],
+  "integration_signals": {
+    "dashboard_retraining_related_words": true,
+    "dashboard_launches_process_or_workflow": true,
+    "retrain_script_defines_training_operations": true,
+    "auto_trigger_contains_dispatch_related_code": true
+  },
+  "stage7_report_excerpts": [
+    {
+      "file": "README_STAGE7.md",
+      "line": 108,
+      "excerpt": "STAGE7_THREE_CANDIDATES_RECEIVED_PASS"
+    },
+    {
+      "file": "README_STAGE7.md",
+      "line": 109,
+      "excerpt": "STAGE7_EVALUATION_GATE_PASS"
+    },
+    {
+      "file": "README_STAGE7.md",
+      "line": 110,
+      "excerpt": "STAGE7_PRODUCTION_UNCHANGED_PASS"
+    },
+    {
+      "file": "README_STAGE7.md",
+      "line": 116,
+      "excerpt": "Artifact: `smart-parking-stage7-<run_id>-<attempt>`. Contains three candidate `.pth` files, train report, evaluation report, and MLflow audit summary. A Gate `FAIL` for a"
+    },
+    {
+      "file": "README_STAGE7.md",
+      "line": 147,
+      "excerpt": "3. Kaggle processes the exact current-run private Dataset; all three candidates and SHA checks pass."
+    },
+    {
+      "file": "README_STAGE7_AUTO.md",
+      "line": 52,
+      "excerpt": "The GitHub workflow proceeds automatically to DVC pull, Kaggle training, Evaluation Gate, MLflow Tracking, **QA registration**. Registration is dynamic: MobileNetV3 / Res"
+    },
+    {
+      "file": "README_STAGE7_AUTO.md",
+      "line": 54,
+      "excerpt": "If no candidate passes the gate, QA registration is skipped."
+    },
+    {
+      "file": "README_STAGE7_AUTO.md",
+      "line": 65,
+      "excerpt": "STAGE7_PRODUCTION_ALIAS_UNCHANGED"
+    },
+    {
+      "file": "README_STAGE7_SIMULATION_UPDATE.md",
+      "line": 8,
+      "excerpt": "- `pipeline/stage7_gate.py` evaluates baseline vs candidate and ranks eligible candidates by macro-F1 (tie break CPU p95). `stage7_test_log.py` **preserves** suggested wi"
+    }
+  ],
+  "git": {
+    "status": "modified",
+    "changed_files": 44
+  },
+  "limits": [
+    "File existence is not proof that a feature runs.",
+    "No network/MLflow/DagsHub/GitHub checks were performed.",
+    "No tests, retraining, inference, DVC actions or production promotion were run.",
+    "No secret contents are printed."
+  ]
+}
