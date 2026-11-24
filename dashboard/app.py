@@ -359,9 +359,11 @@ st.sidebar.markdown("""
 # 7. TABS
 # =====================================================
 
-tab1, tab2 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Giám sát bãi đỗ xe",
-    "📈 Báo cáo và so sánh mô hình"
+    "📈 Báo cáo và so sánh mô hình",
+    "📹 Camera 5 giây & xác nhận nhãn",
+    "🛠️ MLOps Control Center",
 ])
 
 
@@ -374,11 +376,10 @@ with tab1:
     st.subheader("📷 Hình ảnh bãi đỗ xe")
 
     uploaded_file = st.file_uploader(
-        "Tải ảnh thuộc tập test PKLot",
+        "Tải ảnh bãi đỗ xe để suy luận",
         type=["jpg", "jpeg", "png"],
         help=(
-            "Tên file ảnh phải tồn tại trong "
-            "data/test/_annotations.coco.json"
+            "Suy luận thử với ảnh bãi đỗ; tập test chỉ dùng đánh giá độc lập."
         )
     )
 
@@ -553,8 +554,7 @@ with tab1:
 
     else:
         st.info(
-            "Vui lòng tải lên một ảnh từ data/test "
-            "để bắt đầu nhận diện."
+            "Vui lòng tải lên ảnh bãi đỗ để bắt đầu nhận diện."
         )
 
 
@@ -690,3 +690,23 @@ st.caption(
     "Smart Parking MLOps | "
     "PyTorch + FastAPI + Streamlit + MLflow + DagsHub + DVC"
 )
+
+
+# =====================================================
+# 11. TAB 3 - CAMERA SIMULATION (MODULAR)
+# =====================================================
+
+with tab3:
+    from online_stream import render_online_stream
+
+    render_online_stream(api_url=api_base_url, model_type=model_type)
+
+
+# =====================================================
+# 12. TAB 4 - MLOPS MONITORING + TEST_ONLY CONTROL
+# =====================================================
+
+with tab4:
+    from mlops_monitoring import render_mlops_monitoring
+
+    render_mlops_monitoring(root=BASE_DIR, api_health=health_data)

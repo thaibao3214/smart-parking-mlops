@@ -11,6 +11,7 @@ from pathlib import Path
 import streamlit as st
 
 from stage7_control_worker import job_dir
+from stage7_monitor import matching_run, summary_from_artifact
 
 _BATCH_PATTERN = re.compile(r'batch_[0-9]{3,6}\Z')
 
@@ -126,6 +127,30 @@ def _is_authorized():
     return hmac.compare_digest(expected.encode('utf-8'), supplied.encode('utf-8'))
 
 
+
+def launch_worker(root: Path, batch: str, mode: str, batch_id: str = ''):
+    """Start one local background worker. The worker performs final validation."""
+    directory = job_dir()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if (directory / 'active.lock').exists():
+        raise RuntimeError('Một phiên Stage 7 khác đang chạy.')
+    job_id = uuid.uuid4().hex[:24]
+    worker = Path(__file__).resolve().parent / 'stage7_control_worker.py'
+    kwargs = {'cwd': root, 'stdin': subprocess.DEVNULL,
+              'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL,
+              'close_fds': True}
+    if os.name == 'nt':
+        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    else:
+        kwargs['start_new_session'] = True
+    args = [sys.executable, str(worker), '--batch', batch, '--job-id', job_id,
+            '--mode', mode]
+    if mode == 'dispatch':
+        args.extend(['--batch-id', batch_id])
+    subprocess.Popen(args, **kwargs)
+    return job_id
+
+
 def render_stage7_control(root: Path):
     st.divider()
     st.markdown('#### Continuous Training — Điều khiển Stage 7')
@@ -150,8 +175,8 @@ def render_stage7_control(root: Path):
         st.info('Chưa có batch trong simulation_batches/. Tạo batch mới ở máy rồi xác nhận nhãn ở tab Camera.')
         return
     batch = st.selectbox('Batch mô phỏng PKLot train', batches, index=len(batches)-1, key='stage7_selected_batch')
-    st.caption('Mỗi batch mới được gửi MỘT LẦN từ Streamlit. GitHub Actions tự khởi chạy bởi Git push marker; '
-               'KHÔNG cần nhấn Run workflow thủ công. Batch đã gửi không gửi lại từ đây.')
+    st.caption('Batch mới: push marker để GitHub tự chạy. Batch đã gửi: có thể chủ động chạy lại TEST ONLY '
+               'bằng GitHub API từ Streamlit (cần GH_TOKEN). Không thay đổi Production.')
 
     previous = st.session_state.get('stage7_checked')
     if previous and previous.get('batch_name') != batch:
@@ -166,7 +191,7 @@ def render_stage7_control(root: Path):
             st.session_state['stage7_checked'] = data
             previous = data
             if data.get('already_submitted'):
-                st.info('ALREADY SUBMITTED — Batch đã gửi; kiểm tra dữ liệu PASS. Không chạy retraining trùng.')
+                st.info('ALREADY SUBMITTED — Dữ liệu đã gửi và kiểm tra PASS. Có thể chọn chạy lại TEST ONLY có chủ đích bên dưới.')
             else:
                 st.success('Batch hợp lệ — Dry Run PASS')
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
@@ -182,7 +207,25 @@ def render_stage7_control(root: Path):
         st.caption(f'Batch ID: {batch_id} · Mode: {previous.get("mode")}')
         marker = marker_for(root, batch_id)
         if previous.get('already_submitted') or marker.exists():
-            st.info('Batch đã được gửi (immutable marker tồn tại). Không thể trigger trùng.')
+            st.info('Batch đã gửi: không push DVC/Git lại. Có thể dispatch workflow TEST ONLY hiện có.')
+            if not os.environ.get('GH_TOKEN', '').strip():
+                st.warning('Thiếu GH_TOKEN trong môi trường Streamlit. Cần token GitHub có quyền Actions: write '
+                           'và Contents: read cho repository để điều khiển workflow từ đây.')
+            acknowledge_rerun = st.checkbox(
+                'Tôi đồng ý chạy LẠI TEST ONLY trên Kaggle GPU cho batch đã gửi; '
+                'không thay đổi Production.', key='stage7_dispatch_ack')
+            if st.button('🚀 Chạy retraining trên GitHub từ Streamlit', type='primary',
+                         disabled=not acknowledge_rerun or not os.environ.get('GH_TOKEN', '').strip(),
+                         key='stage7_dispatch'):
+                try:
+                    fresh = dry_run(root, batch)
+                    if not fresh.get('already_submitted') or fresh['batch_id'] != batch_id:
+                        raise RuntimeError('Batch/marker không còn khớp. Hãy Dry Run lại.')
+                    job_id = launch_worker(root, batch, 'dispatch', batch_id)
+                    st.success(f'Đã tạo yêu cầu điều khiển {job_id}. Nhấn “Cập nhật trạng thái” '
+                               'để xem GitHub đã chấp nhận workflow_dispatch hay chưa.')
+                except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                    st.error(f'Không thể điều khiển workflow: {exc}')
         elif (job_dir() / 'active.lock').exists():
             st.warning('Đang có một phiên kích hoạt Stage 7 khác. Xem trạng thái bên dưới.')
         else:
@@ -206,19 +249,7 @@ def render_stage7_control(root: Path):
                     if codecheck.returncode != 0:
                         raise RuntimeError('Chưa đồng bộ code Stage 7 lên GitHub:\n' +
                                            (codecheck.stderr or codecheck.stdout)[-1300:])
-                    directory = job_dir()
-                    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-                    job_id = uuid.uuid4().hex[:24]
-                    worker = Path(__file__).resolve().parent / 'stage7_control_worker.py'
-                    kwargs = {'cwd': root, 'stdin': subprocess.DEVNULL,
-                              'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL,
-                              'close_fds': True}
-                    if os.name == 'nt':
-                        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-                    else:
-                        kwargs['start_new_session'] = True
-                    subprocess.Popen([sys.executable, str(worker), '--batch', batch,
-                                      '--job-id', job_id], **kwargs)
+                    job_id = launch_worker(root, batch, 'push')
                     st.session_state.pop('stage7_checked', None)
                     st.success(f'Đã gửi yêu cầu chạy cục bộ: {job_id}. '
                                'Nhấn “Cập nhật trạng thái” để xem kết quả; '
@@ -234,6 +265,8 @@ def render_stage7_control(root: Path):
         st.caption('Chưa có lần kích hoạt nào từ giao diện này.')
     for record in statuses[:5]:
         st.write(f"**{record.get('batch')}** · {record.get('state')} · {record.get('updated_at', '—')}")
+        if record.get('workflow_url'):
+            st.link_button('Mở workflow GitHub', record['workflow_url'])
         if record.get('error'):
             st.warning(str(record['error'])[:400])
         log_path = job_dir() / f"{record['job_id']}.log"
@@ -241,5 +274,68 @@ def render_stage7_control(root: Path):
             with st.expander(f"Nhật ký {record['job_id']}"):
                 content = log_path.read_text(encoding='utf-8', errors='replace')
                 st.code(content[-7000:] or 'Đang khởi động...', language='text')
-    st.caption('“submitted” chỉ xác nhận đã push marker, không phải Kaggle/MLflow đã hoàn tất. '
+    st.markdown('##### Giám sát Retraining trên GitHub Actions')
+    dispatched = [r for r in statuses if r.get('state') == 'dispatched' and r.get('batch_id')]
+    if not dispatched:
+        st.caption('Chưa có yêu cầu workflow_dispatch thành công để đối chiếu.')
+    elif not os.environ.get('GH_TOKEN', '').strip():
+        st.warning('Để kiểm tra run trên GitHub, cần GH_TOKEN có Actions: read.')
+    else:
+        labels = [f"{r['batch']} · {r.get('updated_at', '—')} · {r['job_id'][:8]}" for r in dispatched]
+        chosen_index = st.selectbox('Lần kích hoạt cần giám sát', range(len(dispatched)),
+                                    format_func=lambda i: labels[i], key='stage7_monitored_job')
+        chosen = dispatched[chosen_index]
+        ident = chosen['job_id']
+        if st.button('🔎 Kiểm tra run trên GitHub', key='stage7_lookup_run'):
+            try:
+                with st.spinner('Đối chiếu Batch ID với nhật ký xác minh trên GitHub...'):
+                    run = matching_run(chosen['batch'], chosen['batch_id'],
+                                       chosen['updated_at'], os.environ['GH_TOKEN'].strip())
+                st.session_state['stage7_confirmed_run'] = {'job_id': ident, 'run': run}
+            except (OSError, ValueError, RuntimeError) as exc:
+                st.error(f'Không kiểm tra được: {exc}')
+        current = st.session_state.get('stage7_confirmed_run', {})
+        if current.get('job_id') == ident:
+            run = current.get('run')
+            if not run:
+                st.warning('Chưa xác minh được run tương ứng. Có thể job đang chạy/chưa có log. '
+                           'Không tự gán một run bất kỳ cho batch.')
+            else:
+                st.success(f"Đã xác minh Batch ID trong job log · Run #{run['id']}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric('Run ID', run['id'])
+                c2.metric('GitHub status', run.get('status') or '—')
+                c3.metric('Conclusion', run.get('conclusion') or '—')
+                if run.get('url'):
+                    st.link_button('Mở đúng GitHub run', run['url'])
+                st.info('Workflow success là thành công kỹ thuật; các model vẫn có thể Gate FAIL. '
+                        'TEST ONLY không tự promotion sang Production.')
+                if run.get('status') == 'completed':
+                    st.caption('Chỉ tải artifact REPORT nhỏ (không tải checkpoint). Run cũ chưa có REPORT: xem GitHub Actions → Summary.')
+                    if st.button('📊 Lấy kết quả Evaluation Gate', key='stage7_fetch_metrics'):
+                        try:
+                            with st.spinner('Đọc artifact REPORT nhỏ từ GitHub...'):
+                                summary, report = summary_from_artifact(run['id'], os.environ['GH_TOKEN'].strip())
+                            st.session_state['stage7_run_report'] = {'run_id': run['id'],
+                                                                      'summary': summary, 'report': report}
+                        except (OSError, ValueError, RuntimeError) as exc:
+                            st.error(f'Không đọc được Evaluation Gate: {exc}')
+                    metrics = st.session_state.get('stage7_run_report', {})
+                    if metrics.get('run_id') == run['id']:
+                        st.markdown('###### Kết quả Evaluation Gate (đọc từ artifact của run đã xác minh)')
+                        if metrics.get('summary'):
+                            st.markdown(metrics['summary'])
+                            st.download_button(
+                                '📥 Tải báo cáo Evaluation Gate (.md)',
+                                data=metrics['summary'].encode('utf-8'),
+                                file_name=f"stage7_run_{run['id']}_evaluation.md",
+                                mime='text/markdown',
+                                key='stage7_download_summary')
+                        if metrics.get('report') is not None:
+                            with st.expander('Xem báo cáo JSON gốc'):
+                                st.json(metrics['report'])
+                        st.caption('Gate FAIL nghĩa là candidate chưa đạt điều kiện; '
+                                   'workflow SUCCESS nghĩa là pipeline chạy thành công. '
+                                   'Không promotion Production trong TEST ONLY.')
+    st.caption('“submitted” xác nhận push marker; “dispatched” xác nhận GitHub nhận yêu cầu, không phải Kaggle/MLflow đã hoàn tất. '
                'Theo dõi các bước tiếp theo ở bảng GitHub Actions và MLflow phía trên.')

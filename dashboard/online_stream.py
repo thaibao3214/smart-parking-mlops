@@ -11,6 +11,7 @@ from pathlib import Path
 
 import requests
 import streamlit as st
+from stage7_review_actions import exclude_frame, read_exclusion_ids
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -287,9 +288,39 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
             item = available[idx]
             record = json.loads(_record_path(stream, item, model_type).read_text(encoding='utf-8'))
             target = confirmed / 'frames' / _frame_key(record)
-            if target.exists():
+            try:
+                excluded_ids = read_exclusion_ids(stream, confirmed, manifest) if stream.name.startswith('batch_') else set()
+            except Exception as exc:
+                st.error(f'Không đọc được exclusion record: {exc}')
+                st.stop()
+            is_excluded = str(record['image_id']) in excluded_ids
+            if is_excluded:
+                st.warning('Frame đã bị loại khỏi retraining. Ảnh gốc và dự đoán vẫn được giữ lại.')
+            elif target.exists():
                 st.success('Frame này đã lưu nhãn xác nhận, không ghi đè.')
             else:
+                if stream.name.startswith('batch_'):
+                    st.markdown('**Quản lý chất lượng frame**')
+                    reason = st.selectbox(
+                        'Lý do loại frame',
+                        ['Bounding box sai vị trí, không thể xác nhận tin cậy',
+                         'Nhãn hoặc vị trí ô đỗ quá nhiều lỗi, cần loại frame',
+                         'Ảnh không đủ chất lượng để xác nhận'],
+                        key=f"{prefix}_reason_{record['image_id']}",
+                    )
+                    exclude_ack = st.checkbox(
+                        'Tôi đã kiểm tra và xác nhận cần loại frame này khỏi retraining.',
+                        key=f"{prefix}_exclude_ack_{record['image_id']}",
+                    )
+                    if st.button('🚫 Loại frame khỏi batch',
+                                 key=f"{prefix}_exclude_{record['image_id']}",
+                                 disabled=not exclude_ack):
+                        try:
+                            n = exclude_frame(stream, confirmed, manifest, item, reason)
+                            st.success(f'Đã ghi nhận loại frame. Tổng frame bị loại: {n}.')
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f'Không thể loại frame: {exc}')
                 predictions = record.get('predictions', [])
                 st.image(_annotate(_render_image(stream, record), predictions), width='stretch')
                 rows = [
@@ -321,4 +352,20 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
                         st.error(str(exc))
         count = len(list((confirmed / 'frames').glob('*/labels.json')))
         st.metric('Số frame đã xác nhận trong nguồn này', count)
+        if stream.name.startswith('batch_'):
+            try:
+                excluded = read_exclusion_ids(stream, confirmed, manifest)
+                valid_reviewed = sum(
+                    1 for item in frames
+                    if str(item['image_id']) not in excluded and
+                    (confirmed / 'frames' / f"{item['image_id']}_{Path(item['file_name']).stem}" / 'labels.json').is_file()
+                )
+                a, b, c = st.columns(3)
+                a.metric('Frame hợp lệ đã duyệt', f'{valid_reviewed}/{len(frames) - len(excluded)}')
+                b.metric('Frame loại trừ', len(excluded))
+                c.metric('Frame chưa xử lý', len(frames) - valid_reviewed - len(excluded))
+                if valid_reviewed + len(excluded) == len(frames):
+                    st.success('Đã xử lý hết các frame. Có thể vào MLOps Control Center để Dry Run.')
+            except Exception as exc:
+                st.error(f'Lỗi kiểm tra tiến độ batch: {exc}')
         st.caption(f'Dữ liệu xác nhận: {confirmed.relative_to(ROOT)} · chỉ dùng cho mô phỏng TEST_ONLY.')

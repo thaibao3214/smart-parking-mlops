@@ -284,6 +284,17 @@ jobs:
           python pipeline/stage7_auto_register_qa.py
           echo 'STAGE7_AUTO_QA_REGISTRATION_STEP_PASS'
 
+      - name: Upload lightweight Evaluation Gate report (Streamlit)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smart-parking-stage7-REPORT-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            stage7_test_output/stage7_test_report.json
+            stage7_test_output/stage7_summary.md
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Upload test-only results (never Production)
         if: always()
         uses: actions/upload-artifact@v4

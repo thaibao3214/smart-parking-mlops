@@ -72,3 +72,5 @@ token.json
 /.stage3_kernel/
 /stage2_logs/
 /stage3_logs/
+/simulation_train
+/confirmed_train_sim
