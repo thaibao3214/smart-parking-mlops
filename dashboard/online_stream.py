@@ -192,6 +192,15 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
     """Render one tab of the main Streamlit dashboard (no set_page_config here)."""
     st.subheader('📹 Camera mô phỏng — nhận diện mỗi 5 giây')
     st.caption('PKLot train/test là dữ liệu mô phỏng TEST_ONLY; không phải camera mới ngoài thực tế.')
+    from stage7_unified_camera_ui import render_camera_pipeline
+    render_camera_pipeline(ROOT, api_url)
+    st.divider()
+    manual_mode = st.checkbox(
+        'Hiện công cụ phát lại / xác nhận nhãn thủ công (nâng cao)',
+        value=False, key='cam_manual_mode')
+    if not manual_mode:
+        return
+    st.markdown('#### Phát lại và duyệt nhãn thủ công')
     sources = available_sources()
     choice = st.selectbox('Nguồn luồng camera', list(sources), key='cam_source')
     source = sources[choice]

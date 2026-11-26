@@ -160,6 +160,8 @@ def render_stage7_control(root: Path):
     if not (root / 'pipeline' / 'stage7_auto_trigger.py').is_file():
         st.warning('Không tìm thấy pipeline/stage7_auto_trigger.py trong project.')
         return
+    from stage7_unified_camera_ui import render_pipeline_summary
+    render_pipeline_summary(root)
     if len(os.environ.get('MLOPS_CONTROL_PASSWORD', '')) < 12:
         st.warning('Chức năng điều khiển đang khóa. Cấu hình MLOPS_CONTROL_PASSWORD (ít nhất 12 ký tự) '
                    'trong môi trường của tiến trình Streamlit rồi khởi động lại ứng dụng.')
@@ -170,94 +172,93 @@ def render_stage7_control(root: Path):
         st.info('Nhập mật khẩu điều khiển để kiểm tra batch và kích hoạt retraining.')
         return
 
-    from stage7_auto_batch_ui import render_auto_batch_005
-    render_auto_batch_005(root)
-    batches = discover_batches(root)
-    if not batches:
-        st.info('Chưa có batch trong simulation_batches/. Tạo batch mới ở máy rồi xác nhận nhãn ở tab Camera.')
-        return
-    batch = st.selectbox('Batch mô phỏng PKLot train', batches, index=len(batches)-1, key='stage7_selected_batch')
-    st.caption('Batch mới: push marker để GitHub tự chạy. Batch đã gửi: có thể chủ động chạy lại TEST ONLY '
-               'bằng GitHub API từ Streamlit (cần GH_TOKEN). Không thay đổi Production.')
+    with st.expander('Công cụ điều khiển thủ công (nâng cao)', expanded=False):
+        batches = discover_batches(root)
+        if not batches:
+            st.info('Chưa có batch trong simulation_batches/. Tạo batch mới ở máy rồi xác nhận nhãn ở tab Camera.')
+            return
+        batch = st.selectbox('Batch mô phỏng PKLot train', batches, index=len(batches)-1, key='stage7_selected_batch')
+        st.caption('Batch mới: push marker để GitHub tự chạy. Batch đã gửi: có thể chủ động chạy lại TEST ONLY '
+                   'bằng GitHub API từ Streamlit (cần GH_TOKEN). Không thay đổi Production.')
 
-    previous = st.session_state.get('stage7_checked')
-    if previous and previous.get('batch_name') != batch:
-        st.session_state.pop('stage7_checked', None)
-        previous = None
-
-    if st.button('🔍 Kiểm tra dữ liệu (Dry Run)', key='stage7_verify'):
-        st.session_state.pop('stage7_checked', None)
-        try:
-            with st.spinner('Đang kiểm tra nguồn dữ liệu, số crop và exclusions...'):
-                data = dry_run(root, batch)
-            st.session_state['stage7_checked'] = data
-            previous = data
-            if data.get('already_submitted'):
-                st.info('ALREADY SUBMITTED — Dữ liệu đã gửi và kiểm tra PASS. Có thể chọn chạy lại TEST ONLY có chủ đích bên dưới.')
-            else:
-                st.success('Batch hợp lệ — Dry Run PASS')
-        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-            st.error(str(exc)[:2700])
+        previous = st.session_state.get('stage7_checked')
+        if previous and previous.get('batch_name') != batch:
+            st.session_state.pop('stage7_checked', None)
             previous = None
 
-    if previous:
-        batch_id = previous['batch_id']
-        col1, col2, col3 = st.columns(3)
-        col1.metric('Frames hợp lệ', previous.get('frames', '—'))
-        col2.metric('Crops', previous.get('crops', '—'))
-        col3.metric('Loại trừ', len(previous.get('excluded_source_image_ids', [])))
-        st.caption(f'Batch ID: {batch_id} · Mode: {previous.get("mode")}')
-        marker = marker_for(root, batch_id)
-        if previous.get('already_submitted') or marker.exists():
-            st.info('Batch đã gửi: không push DVC/Git lại. Có thể dispatch workflow TEST ONLY hiện có.')
-            if not os.environ.get('GH_TOKEN', '').strip():
-                st.warning('Thiếu GH_TOKEN trong môi trường Streamlit. Cần token GitHub có quyền Actions: write '
-                           'và Contents: read cho repository để điều khiển workflow từ đây.')
-            acknowledge_rerun = st.checkbox(
-                'Tôi đồng ý chạy LẠI TEST ONLY trên Kaggle GPU cho batch đã gửi; '
-                'không thay đổi Production.', key='stage7_dispatch_ack')
-            if st.button('🚀 Chạy retraining trên GitHub từ Streamlit', type='primary',
-                         disabled=not acknowledge_rerun or not os.environ.get('GH_TOKEN', '').strip(),
-                         key='stage7_dispatch'):
-                try:
-                    fresh = dry_run(root, batch)
-                    if not fresh.get('already_submitted') or fresh['batch_id'] != batch_id:
-                        raise RuntimeError('Batch/marker không còn khớp. Hãy Dry Run lại.')
-                    job_id = launch_worker(root, batch, 'dispatch', batch_id)
-                    st.success(f'Đã tạo yêu cầu điều khiển {job_id}. Nhấn “Cập nhật trạng thái” '
-                               'để xem GitHub đã chấp nhận workflow_dispatch hay chưa.')
-                except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-                    st.error(f'Không thể điều khiển workflow: {exc}')
-        elif (job_dir() / 'active.lock').exists():
-            st.warning('Đang có một phiên kích hoạt Stage 7 khác. Xem trạng thái bên dưới.')
-        else:
-            acknowledge = st.checkbox('Tôi đã kiểm tra nhãn/bounding box và đồng ý gửi batch TEST_ONLY lên DVC/GitHub.',
-                                      key='stage7_ack')
-            if st.button('🚀 Bắt đầu retraining', type='primary', disabled=not acknowledge, key='stage7_launch'):
-                # Recheck immutable batch and metadata directly before submitting.
-                try:
-                    fresh = dry_run(root, batch)
-                    if fresh['batch_id'] != batch_id or marker_for(root, batch_id).exists():
-                        raise RuntimeError('Batch đã thay đổi hoặc đã gửi; kiểm tra lại.')
-                    if (job_dir() / 'active.lock').exists():
-                        raise RuntimeError('Đã có một phiên Stage 7 đang chạy.')
-                    # Fail before starting a detached worker when GitHub code is stale.
-                    codecheck = subprocess.run(
-                        [sys.executable, '-c',
-                         'import sys; sys.path.insert(0, "pipeline"); '
-                         'from stage7_auto_trigger import verify_code_ready; verify_code_ready()'],
-                        cwd=root, capture_output=True, text=True,
-                        encoding='utf-8', errors='replace', timeout=20, check=False)
-                    if codecheck.returncode != 0:
-                        raise RuntimeError('Chưa đồng bộ code Stage 7 lên GitHub:\n' +
-                                           (codecheck.stderr or codecheck.stdout)[-1300:])
-                    job_id = launch_worker(root, batch, 'push')
-                    st.session_state.pop('stage7_checked', None)
-                    st.success(f'Đã gửi yêu cầu chạy cục bộ: {job_id}. '
-                               'Nhấn “Cập nhật trạng thái” để xem kết quả; '
-                               'GitHub Actions chỉ bắt đầu sau khi marker được push.')
-                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-                    st.error(f'Không thể kích hoạt: {exc}')
+        if st.button('🔍 Kiểm tra dữ liệu (Dry Run)', key='stage7_verify'):
+            st.session_state.pop('stage7_checked', None)
+            try:
+                with st.spinner('Đang kiểm tra nguồn dữ liệu, số crop và exclusions...'):
+                    data = dry_run(root, batch)
+                st.session_state['stage7_checked'] = data
+                previous = data
+                if data.get('already_submitted'):
+                    st.info('ALREADY SUBMITTED — Dữ liệu đã gửi và kiểm tra PASS. Có thể chọn chạy lại TEST ONLY có chủ đích bên dưới.')
+                else:
+                    st.success('Batch hợp lệ — Dry Run PASS')
+            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                st.error(str(exc)[:2700])
+                previous = None
+
+        if previous:
+            batch_id = previous['batch_id']
+            col1, col2, col3 = st.columns(3)
+            col1.metric('Frames hợp lệ', previous.get('frames', '—'))
+            col2.metric('Crops', previous.get('crops', '—'))
+            col3.metric('Loại trừ', len(previous.get('excluded_source_image_ids', [])))
+            st.caption(f'Batch ID: {batch_id} · Mode: {previous.get("mode")}')
+            marker = marker_for(root, batch_id)
+            if previous.get('already_submitted') or marker.exists():
+                st.info('Batch đã gửi: không push DVC/Git lại. Có thể dispatch workflow TEST ONLY hiện có.')
+                if not os.environ.get('GH_TOKEN', '').strip():
+                    st.warning('Thiếu GH_TOKEN trong môi trường Streamlit. Cần token GitHub có quyền Actions: write '
+                               'và Contents: read cho repository để điều khiển workflow từ đây.')
+                acknowledge_rerun = st.checkbox(
+                    'Tôi đồng ý chạy LẠI TEST ONLY trên Kaggle GPU cho batch đã gửi; '
+                    'không thay đổi Production.', key='stage7_dispatch_ack')
+                if st.button('🚀 Chạy retraining trên GitHub từ Streamlit', type='primary',
+                             disabled=not acknowledge_rerun or not os.environ.get('GH_TOKEN', '').strip(),
+                             key='stage7_dispatch'):
+                    try:
+                        fresh = dry_run(root, batch)
+                        if not fresh.get('already_submitted') or fresh['batch_id'] != batch_id:
+                            raise RuntimeError('Batch/marker không còn khớp. Hãy Dry Run lại.')
+                        job_id = launch_worker(root, batch, 'dispatch', batch_id)
+                        st.success(f'Đã tạo yêu cầu điều khiển {job_id}. Nhấn “Cập nhật trạng thái” '
+                                   'để xem GitHub đã chấp nhận workflow_dispatch hay chưa.')
+                    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                        st.error(f'Không thể điều khiển workflow: {exc}')
+            elif (job_dir() / 'active.lock').exists():
+                st.warning('Đang có một phiên kích hoạt Stage 7 khác. Xem trạng thái bên dưới.')
+            else:
+                acknowledge = st.checkbox('Tôi đã kiểm tra nhãn/bounding box và đồng ý gửi batch TEST_ONLY lên DVC/GitHub.',
+                                          key='stage7_ack')
+                if st.button('🚀 Bắt đầu retraining', type='primary', disabled=not acknowledge, key='stage7_launch'):
+                    # Recheck immutable batch and metadata directly before submitting.
+                    try:
+                        fresh = dry_run(root, batch)
+                        if fresh['batch_id'] != batch_id or marker_for(root, batch_id).exists():
+                            raise RuntimeError('Batch đã thay đổi hoặc đã gửi; kiểm tra lại.')
+                        if (job_dir() / 'active.lock').exists():
+                            raise RuntimeError('Đã có một phiên Stage 7 đang chạy.')
+                        # Fail before starting a detached worker when GitHub code is stale.
+                        codecheck = subprocess.run(
+                            [sys.executable, '-c',
+                             'import sys; sys.path.insert(0, "pipeline"); '
+                             'from stage7_auto_trigger import verify_code_ready; verify_code_ready()'],
+                            cwd=root, capture_output=True, text=True,
+                            encoding='utf-8', errors='replace', timeout=20, check=False)
+                        if codecheck.returncode != 0:
+                            raise RuntimeError('Chưa đồng bộ code Stage 7 lên GitHub:\n' +
+                                               (codecheck.stderr or codecheck.stdout)[-1300:])
+                        job_id = launch_worker(root, batch, 'push')
+                        st.session_state.pop('stage7_checked', None)
+                        st.success(f'Đã gửi yêu cầu chạy cục bộ: {job_id}. '
+                                   'Nhấn “Cập nhật trạng thái” để xem kết quả; '
+                                   'GitHub Actions chỉ bắt đầu sau khi marker được push.')
+                    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                        st.error(f'Không thể kích hoạt: {exc}')
 
     st.markdown('##### Trạng thái các lần kích hoạt từ Streamlit')
     if st.button('🔄 Cập nhật trạng thái', key='stage7_reload_jobs'):

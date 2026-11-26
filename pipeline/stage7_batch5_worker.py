@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -28,6 +29,15 @@ BATCH = 'batch_005'
 STATUS_DIR = Path.home() / '.smartparking_stage7_control'
 STATUS_FILE = STATUS_DIR / 'auto_batch_005.json'
 LOCK_FILE = STATUS_DIR / 'auto_batch_005.lock'
+GLOBAL_LOCK = STATUS_DIR / 'auto_batch_active.lock'
+
+def configure_batch(batch):
+    global BATCH, STATUS_FILE, LOCK_FILE
+    if not re.fullmatch(r'batch_[0-9]{3,6}', batch):
+        raise ValueError('Unsafe batch name')
+    BATCH = batch
+    STATUS_FILE = STATUS_DIR / f'auto_{batch}.json'
+    LOCK_FILE = STATUS_DIR / f'auto_{batch}.lock'
 
 
 def utc():
@@ -44,7 +54,7 @@ def status(state, **values):
             pass
     old.update(values)
     old.update(state=state, updated_at=utc(), batch=BATCH, mode='TEST_ONLY_NO_PROMOTION')
-    temp = STATUS_DIR / ('.auto_batch_005_' + uuid.uuid4().hex + '.tmp')
+    temp = STATUS_DIR / (f'.auto_{BATCH}_' + uuid.uuid4().hex + '.tmp')
     temp.write_text(json.dumps(old, indent=2, ensure_ascii=False), encoding='utf-8')
     temp.replace(STATUS_FILE)
 
@@ -88,7 +98,7 @@ def make_if_needed():
         last_error = None
         for cell in (32, 48, 64):
             try:
-                make_batch(BATCH, 20, 20261126, cell)
+                make_batch(BATCH, 20, 20261126 + int(BATCH.split('_')[1]) - 5, cell)
                 status('created', created_by_auto_worker=True, cell=cell, completed_frames=0, message='Created 20 new PKLot TRAIN frames')
                 break
             except RuntimeError as exc:
@@ -208,7 +218,9 @@ def run(api_url):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--api-url', default='http://127.0.0.1:8000')
+    p.add_argument('--batch', default='batch_005')
     args = p.parse_args()
+    configure_batch(args.batch)
     try:
         run(args.api_url)
     except Exception as exc:
@@ -217,6 +229,13 @@ def main():
         sys.exit(1)
     finally:
         LOCK_FILE.unlink(missing_ok=True)
+        # Only release a shared lock owned by this batch.
+        if GLOBAL_LOCK.is_file():
+            try:
+                if GLOBAL_LOCK.read_text(encoding='utf-8').strip() == BATCH:
+                    GLOBAL_LOCK.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 if __name__ == '__main__':
