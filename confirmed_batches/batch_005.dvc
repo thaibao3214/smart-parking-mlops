@@ -1,0 +1,6 @@
+outs:
+- md5: e195fcdb4bd31d6a8fbb71c324a11613.dir
+  size: 11591036
+  nfiles: 2020
+  hash: md5
+  path: batch_005
