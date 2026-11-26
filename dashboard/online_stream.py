@@ -73,15 +73,24 @@ def _annotate(image, predictions):
 
 def _predict(stream, item, api_url, model_type, origin, source_split):
     src = _frame_file(stream, item)
+    # The API builds its COCO index at startup. Newly created batches can reuse
+    # frame_001.jpg, so upload with the immutable original PKLot filename instead.
+    # File bytes are unchanged and FastAPI still checks their SHA256 against COCO.
+    upload_name = item.get('source_file_name') or src.name
+    if not isinstance(upload_name, str) or Path(upload_name).name != upload_name:
+        raise ValueError('Invalid original PKLot filename in simulation manifest')
     response = requests.post(
         f"{api_url.rstrip('/')}/predict",
-        files={'file': (src.name, src.read_bytes(), 'application/octet-stream')},
+        files={'file': (upload_name, src.read_bytes(), 'application/octet-stream')},
         data={'model_type': model_type},
         timeout=120,
     )
     if not response.ok:
         raise RuntimeError(f'FastAPI HTTP {response.status_code}: {response.text[:400]}')
     result = response.json()
+    if (result.get('image_name') != upload_name or
+            result.get('source_split') != source_split):
+        raise ValueError('FastAPI returned a different PKLot filename/source split')
     predictions = result.get('predictions')
     if not isinstance(predictions, list):
         raise ValueError('API response thiếu predictions')
