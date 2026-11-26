@@ -52,8 +52,12 @@ def confirmed_rows():
         ref = mapping.get(image_id)
         if ref is None or ref['file_name'] != payload['source_image'] or image_id in used_images:
             raise ValueError('Unexpected, duplicate, or wrong-source confirmation')
-        if payload.get('review_method') != 'manual_frame_review':
-            raise ValueError('Each frame requires manual review')
+        method = payload.get('review_method')
+        if method == 'pklot_coco_ground_truth':
+            from stage7_gt_labels import validate_gt_record
+            validate_gt_record(Path.cwd(), SIM, CONFIRMED, ref, payload, labels)
+        elif method != 'manual_frame_review':
+            raise ValueError('Invalid frame review provenance')
         used_images.add(image_id)
         slots = payload.get('slots', [])
         if not slots:

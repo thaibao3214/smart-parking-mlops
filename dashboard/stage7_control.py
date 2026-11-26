@@ -170,6 +170,8 @@ def render_stage7_control(root: Path):
         st.info('Nhập mật khẩu điều khiển để kiểm tra batch và kích hoạt retraining.')
         return
 
+    from stage7_auto_batch_ui import render_auto_batch_005
+    render_auto_batch_005(root)
     batches = discover_batches(root)
     if not batches:
         st.info('Chưa có batch trong simulation_batches/. Tạo batch mới ở máy rồi xác nhận nhãn ở tab Camera.')

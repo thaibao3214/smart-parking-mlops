@@ -297,7 +297,11 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
             if is_excluded:
                 st.warning('Frame đã bị loại khỏi retraining. Ảnh gốc và dự đoán vẫn được giữ lại.')
             elif target.exists():
-                st.success('Frame này đã lưu nhãn xác nhận, không ghi đè.')
+                prior = json.loads((target / 'labels.json').read_text(encoding='utf-8'))
+                if prior.get('review_method') == 'pklot_coco_ground_truth':
+                    st.success('Frame này đã xác minh tự động bằng nhãn PKLot COCO TRAIN (không phải duyệt thủ công).')
+                else:
+                    st.success('Frame này đã lưu nhãn xác nhận thủ công, không ghi đè.')
             else:
                 if stream.name.startswith('batch_'):
                     st.markdown('**Quản lý chất lượng frame**')

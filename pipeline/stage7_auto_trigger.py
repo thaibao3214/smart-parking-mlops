@@ -89,9 +89,14 @@ def verify(batch):
         ref = mapped.get(frame_id)
         if frame_id in excluded_ids:
             continue  # Keep original on disk, but never train on this frame.
-        if (not ref or frame_id in seen or record.get('source_image') != ref['file_name'] or
-            record.get('review_method') != 'manual_frame_review'):
-            raise ValueError('Invalid manual confirmation / wrong frame')
+        if (not ref or frame_id in seen or record.get('source_image') != ref['file_name']):
+            raise ValueError('Invalid confirmation / wrong frame')
+        method = record.get('review_method')
+        if method == 'pklot_coco_ground_truth':
+            from stage7_gt_labels import validate_gt_record
+            validate_gt_record(ROOT, sim, conf, ref, record, path)
+        elif method != 'manual_frame_review':
+            raise ValueError('Unrecognized confirmation method')
         seen.add(frame_id)
         digest.update(path.relative_to(conf).as_posix().encode())
         digest.update(path.read_bytes())
@@ -137,6 +142,7 @@ SYNC_CRITICAL_PATHS = (
     '.github/workflows/stage7_test_only.yml',
     'pipeline/stage7_exclude_frame.py',
     'pipeline/stage7_test_prepare.py',
+    'pipeline/stage7_gt_labels.py',
     'pipeline/stage7_auto_trigger.py',
     'pipeline/stage7_gate.py',
     'pipeline/stage7_auto_register_qa.py',
