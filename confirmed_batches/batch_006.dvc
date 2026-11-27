@@ -1,0 +1,6 @@
+outs:
+- md5: 3f309aa5f9e3ac42e0ae04645e873843.dir
+  size: 12026802
+  nfiles: 2020
+  hash: md5
+  path: batch_006
