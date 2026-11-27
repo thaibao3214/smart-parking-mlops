@@ -1,3 +1,4 @@
+# SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """Password-gated, local-only Streamlit controller for Stage 7 TEST_ONLY batches."""
 import hmac
 import json
@@ -14,6 +15,16 @@ from stage7_control_worker import job_dir
 from stage7_monitor import matching_run, summary_from_artifact
 
 _BATCH_PATTERN = re.compile(r'batch_[0-9]{3,6}\Z')
+
+def _display_capture_date(root: Path, batch: str) -> str:
+    """Display capture date, not the internal batch sequence number."""
+    try:
+        from datetime import datetime
+        manifest = Path(root) / 'simulation_batches' / batch / 'manifest.json'
+        return 'Dữ liệu lưu ngày ' + datetime.fromtimestamp(manifest.stat().st_mtime).strftime('%d/%m/%Y %H:%M')
+    except (OSError, ValueError):
+        return 'Dữ liệu đã lưu'
+
 
 
 def discover_batches(root):
@@ -153,7 +164,7 @@ def launch_worker(root: Path, batch: str, mode: str, batch_id: str = ''):
 
 def render_stage7_control(root: Path):
     st.divider()
-    st.markdown('#### Continuous Training — Điều khiển Stage 7')
+    st.markdown('#### Theo dõi và quản lý huấn luyện lại')
     st.caption('Chỉ điều khiển TEST_ONLY. Nút này chạy pipeline thật trên máy đang chạy Streamlit; '
                'sau khi push marker, GitHub Actions mới thực hiện retraining trên Kaggle GPU. '
                'Không tự chuyển model sang Production.')
@@ -166,7 +177,7 @@ def render_stage7_control(root: Path):
         st.warning('Chức năng điều khiển đang khóa. Cấu hình MLOPS_CONTROL_PASSWORD (ít nhất 12 ký tự) '
                    'trong môi trường của tiến trình Streamlit rồi khởi động lại ứng dụng.')
         return
-    st.text_input('Mật khẩu điều khiển Stage 7', type='password', key='stage7_password',
+    st.text_input('Mật khẩu quản trị', type='password', key='stage7_password',
                   help='Không phải DagsHub/GitHub token. Không ghi vào mã nguồn.')
     if not _is_authorized():
         st.info('Nhập mật khẩu điều khiển để kiểm tra batch và kích hoạt retraining.')
@@ -175,10 +186,12 @@ def render_stage7_control(root: Path):
     with st.expander('Công cụ điều khiển thủ công (nâng cao)', expanded=False):
         batches = discover_batches(root)
         if not batches:
-            st.info('Chưa có batch trong simulation_batches/. Tạo batch mới ở máy rồi xác nhận nhãn ở tab Camera.')
+            st.info('Chưa có dữ liệu mô phỏng. Bạn có thể bắt đầu thu thập tại tab Camera.')
             return
-        batch = st.selectbox('Batch mô phỏng PKLot train', batches, index=len(batches)-1, key='stage7_selected_batch')
-        st.caption('Batch mới: push marker để GitHub tự chạy. Batch đã gửi: có thể chủ động chạy lại TEST ONLY '
+        batch = st.selectbox('Chọn dữ liệu đã thu thập', batches, index=len(batches)-1,
+                            format_func=lambda b: _display_capture_date(root, b),
+                            key='stage7_selected_batch')
+        st.caption('Dữ liệu mới được gửi để huấn luyện. Dữ liệu đã gửi có thể chạy lại có chủ đích '
                    'bằng GitHub API từ Streamlit (cần GH_TOKEN). Không thay đổi Production.')
 
         previous = st.session_state.get('stage7_checked')
@@ -196,7 +209,7 @@ def render_stage7_control(root: Path):
                 if data.get('already_submitted'):
                     st.info('ALREADY SUBMITTED — Dữ liệu đã gửi và kiểm tra PASS. Có thể chọn chạy lại TEST ONLY có chủ đích bên dưới.')
                 else:
-                    st.success('Batch hợp lệ — Dry Run PASS')
+                    st.success('Dữ liệu hợp lệ — kiểm tra thành công')
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
                 st.error(str(exc)[:2700])
                 previous = None
@@ -207,10 +220,10 @@ def render_stage7_control(root: Path):
             col1.metric('Frames hợp lệ', previous.get('frames', '—'))
             col2.metric('Crops', previous.get('crops', '—'))
             col3.metric('Loại trừ', len(previous.get('excluded_source_image_ids', [])))
-            st.caption(f'Batch ID: {batch_id} · Mode: {previous.get("mode")}')
+            st.caption('Dữ liệu đã được kiểm tra; mã nội bộ vẫn được lưu để truy vết.')
             marker = marker_for(root, batch_id)
             if previous.get('already_submitted') or marker.exists():
-                st.info('Batch đã gửi: không push DVC/Git lại. Có thể dispatch workflow TEST ONLY hiện có.')
+                st.info('Dữ liệu đã gửi: không gửi lại DVC/Git. Có thể chạy lại quy trình thử nghiệm có chủ đích.')
                 if not os.environ.get('GH_TOKEN', '').strip():
                     st.warning('Thiếu GH_TOKEN trong môi trường Streamlit. Cần token GitHub có quyền Actions: write '
                                'và Contents: read cho repository để điều khiển workflow từ đây.')
@@ -260,14 +273,14 @@ def render_stage7_control(root: Path):
                     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                         st.error(f'Không thể kích hoạt: {exc}')
 
-    st.markdown('##### Trạng thái các lần kích hoạt từ Streamlit')
+    st.markdown('##### Lịch sử yêu cầu huấn luyện')
     if st.button('🔄 Cập nhật trạng thái', key='stage7_reload_jobs'):
         st.rerun()
     statuses = read_statuses()
     if not statuses:
         st.caption('Chưa có lần kích hoạt nào từ giao diện này.')
     for record in statuses[:5]:
-        st.write(f"**{record.get('batch')}** · {record.get('state')} · {record.get('updated_at', '—')}")
+        st.write(f"**Lần xử lý dữ liệu** · {record.get('state')} · {record.get('updated_at', '—')}")
         if record.get('workflow_url'):
             st.link_button('Mở workflow GitHub', record['workflow_url'])
         if record.get('error'):
@@ -277,14 +290,14 @@ def render_stage7_control(root: Path):
             with st.expander(f"Nhật ký {record['job_id']}"):
                 content = log_path.read_text(encoding='utf-8', errors='replace')
                 st.code(content[-7000:] or 'Đang khởi động...', language='text')
-    st.markdown('##### Giám sát Retraining trên GitHub Actions')
+    st.markdown('##### Theo dõi quá trình huấn luyện trên GitHub')
     dispatched = [r for r in statuses if r.get('state') == 'dispatched' and r.get('batch_id')]
     if not dispatched:
         st.caption('Chưa có yêu cầu workflow_dispatch thành công để đối chiếu.')
     elif not os.environ.get('GH_TOKEN', '').strip():
         st.warning('Để kiểm tra run trên GitHub, cần GH_TOKEN có Actions: read.')
     else:
-        labels = [f"{r['batch']} · {r.get('updated_at', '—')} · {r['job_id'][:8]}" for r in dispatched]
+        labels = [f"Yêu cầu lúc {r.get('updated_at', '—')}" for r in dispatched]
         chosen_index = st.selectbox('Lần kích hoạt cần giám sát', range(len(dispatched)),
                                     format_func=lambda i: labels[i], key='stage7_monitored_job')
         chosen = dispatched[chosen_index]

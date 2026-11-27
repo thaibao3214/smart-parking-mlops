@@ -1,3 +1,4 @@
+# SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """Camera simulation UI embedded in dashboard/app.py.
 
 Data provenance is preserved. Old PKLot test simulation and new PKLot train
@@ -179,7 +180,8 @@ def available_sources():
         batch = manifest_file.parent.name
         if not batch.startswith('batch_'):
             continue
-        result[f'PKLot train — {batch} (TEST_ONLY)'] = {
+        date_label = datetime.fromtimestamp(manifest_file.stat().st_mtime).strftime('%d/%m/%Y %H:%M:%S')
+        result[f'PKLot train — lưu lúc {date_label} (TEST_ONLY)'] = {
             'stream': manifest_file.parent,
             'confirmed': ROOT / 'confirmed_batches' / batch,
             'origin': 'pklot_train_simulation',
@@ -369,7 +371,7 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
                         if len(labels) != len(predictions) or not predictions:
                             raise ValueError('Thiếu dự đoán hoặc thiếu nhãn xác nhận')
                         path, count = _save_review(stream, confirmed, record, labels, source)
-                        st.success(f'Đã lưu {count} crop 64×64 vào {path}')
+                        st.success(f'Đã lưu nhãn xác nhận cho {count} ô đỗ.')
                     except Exception as exc:
                         st.error(str(exc))
         count = len(list((confirmed / 'frames').glob('*/labels.json')))
@@ -390,4 +392,4 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
                     st.success('Đã xử lý hết các frame. Có thể vào MLOps Control Center để Dry Run.')
             except Exception as exc:
                 st.error(f'Lỗi kiểm tra tiến độ batch: {exc}')
-        st.caption(f'Dữ liệu xác nhận: {confirmed.relative_to(ROOT)} · chỉ dùng cho mô phỏng TEST_ONLY.')
+        st.caption('Nhãn xác nhận được lưu riêng để kiểm tra; chỉ dùng cho mô phỏng.')

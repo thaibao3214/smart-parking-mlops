@@ -47,41 +47,14 @@ CHART_PATHS = {
 # 2. CSS
 # =====================================================
 
+# BEGIN SMART_PARKING_SIMPLE_UI_V1 — minimal styling
 st.markdown("""
 <style>
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 2rem;
-    }
-
-    .main-title {
-        padding: 24px;
-        border-radius: 14px;
-        background: linear-gradient(120deg, #123c69, #227c70);
-        color: white;
-        margin-bottom: 18px;
-    }
-
-    .main-title h1 {
-        color: white;
-        font-size: 30px;
-        margin-bottom: 8px;
-    }
-
-    .main-title p {
-        color: #e8f2f5;
-        margin-bottom: 0;
-    }
-
-    .section-title {
-        font-size: 20px;
-        font-weight: 700;
-        margin-top: 10px;
-        margin-bottom: 12px;
-    }
+    .block-container {max-width: 1250px; padding-top: 1.1rem; padding-bottom: 1.8rem;}
+    div[data-testid="stMetric"] {padding: 0.2rem 0;}
 </style>
 """, unsafe_allow_html=True)
-
+# END SMART_PARKING_SIMPLE_UI_V1
 
 # =====================================================
 # 3. HELPER FUNCTIONS
@@ -261,109 +234,76 @@ if "prediction_key" not in st.session_state:
 # 5. HEADER
 # =====================================================
 
-st.markdown("""
-<div class="main-title">
-    <h1>🚗 SMART PARKING MLOPS</h1>
-    <p>
-        Hệ thống giám sát bãi đỗ xe thông minh
-        sử dụng Deep Learning, FastAPI, MLflow và DagsHub
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
+# BEGIN SMART_PARKING_SIMPLE_UI_V1 — compact header
+st.title("🚗 Smart Parking MLOps")
+st.caption(
+    "Đồ án mô phỏng camera bằng ảnh PKLot. "
+    "Dữ liệu mô phỏng không phải ảnh thu trực tiếp từ camera thật."
+)
+with st.expander("📌 Cách sử dụng (xem nhanh)", expanded=False):
+    st.markdown(
+        "1. **Camera mô phỏng:** xem frame, thu thập batch và kiểm tra tiến độ.\n"
+        "2. **Thử nhận diện:** tải một ảnh PKLot để xem ô trống/có xe.\n"
+        "3. **Huấn luyện & theo dõi:** theo dõi GitHub Actions, DVC, MLflow và Gate.\n"
+        "4. **Kết quả mô hình:** xem so sánh và biểu đồ huấn luyện.\n\n"
+        "**TEST ONLY:** không tự động thay đổi model Production."
+    )
+# END SMART_PARKING_SIMPLE_UI_V1
 
 # =====================================================
 # 6. SIDEBAR
 # =====================================================
 
-st.sidebar.header("⚙️ Cấu hình hệ thống")
-
-api_url_input = st.sidebar.text_input(
-    "FastAPI Endpoint",
-    DEFAULT_API_URL
-)
-
-api_base_url = normalize_api_url(api_url_input)
-
-selected_model_name = st.sidebar.selectbox(
-    "Chọn mô hình AI",
-    list(MODEL_OPTIONS.keys())
-)
-
-model_type = MODEL_OPTIONS[selected_model_name]
-
-st.sidebar.divider()
-
-st.sidebar.subheader("🌐 Trạng thái FastAPI")
-
-health_data, health_error = get_api_health(api_base_url)
-
-if health_data:
-    st.sidebar.success("FastAPI đang hoạt động")
-
-    st.sidebar.write(
-        "**Model source:**",
-        health_data.get("model_source", "Unknown")
+# BEGIN SMART_PARKING_SIMPLE_UI_V1 — compact sidebar
+with st.sidebar:
+    st.markdown("### ⚙️ Điều khiển nhanh")
+    selected_model_name = st.selectbox(
+        "Mô hình nhận diện", list(MODEL_OPTIONS.keys()),
+        help="Lựa chọn này dùng khi thử ảnh và trong chế độ camera thủ công."
     )
+    model_type = MODEL_OPTIONS[selected_model_name]
 
-    st.sidebar.write(
-        "**Version:**",
-        health_data.get("model_version", "Unknown")
-    )
-
-    st.sidebar.write(
-        "**Device:**",
-        health_data.get("device", "Unknown")
-    )
-
-    st.sidebar.write(
-        "**Registry alias:**",
-        health_data.get("registry_alias", "Unknown")
-    )
-
-    if health_data.get("model_source") == "DagsHub Registry":
-        st.sidebar.success(
-            "Đang sử dụng Model Registry Production"
+    with st.expander("Địa chỉ FastAPI", expanded=False):
+        api_url_input = st.text_input(
+            "Máy chủ suy luận", DEFAULT_API_URL,
+            help="Mặc định dùng FastAPI trên máy của bạn (cổng 8000)."
         )
+    api_base_url = normalize_api_url(api_url_input)
+    health_data, health_error = get_api_health(api_base_url)
+
+    if health_data:
+        st.success("FastAPI đang hoạt động")
+        st.caption(
+            "Model đang phục vụ: phiên bản "
+            + str(health_data.get("model_version", "?"))
+            + " · alias " + str(health_data.get("registry_alias", "?"))
+        )
+        if health_data.get("model_source") != "DagsHub Registry":
+            st.warning("FastAPI đang dùng model local/fallback.")
     else:
-        st.sidebar.warning(
-            "Đang sử dụng Local fallback"
+        st.error("Chưa kết nối FastAPI")
+        with st.expander("Xem chi tiết lỗi kết nối", expanded=False):
+            st.code(str(health_error or "Không rõ lỗi")[:400])
+
+    with st.expander("Giải thích thuật ngữ", expanded=False):
+        st.markdown(
+            "**PKLot:** bộ ảnh bãi đỗ dùng để mô phỏng camera.  "
+            "\n**DVC:** lưu phiên bản dữ liệu.  "
+            "\n**Retraining:** huấn luyện lại model.  "
+            "\n**Evaluation Gate:** bước kiểm tra model mới.  "
+            "\n**Production:** model đang phục vụ người dùng."
         )
-
-else:
-    st.sidebar.error("Không kết nối được FastAPI")
-    st.sidebar.caption(health_error)
-
-st.sidebar.divider()
-
-st.sidebar.subheader("📦 Thông tin dự án")
-
-st.sidebar.markdown("""
-**Dataset:** PKLot
-
-**Framework:** PyTorch
-
-**Model Registry:** MLflow + DagsHub
-
-**Data Versioning:** DVC
-
-**API:** FastAPI
-
-**Dashboard:** Streamlit
-
-**Deployment:** Local CPU
-""")
-
+# END SMART_PARKING_SIMPLE_UI_V1
 
 # =====================================================
 # 7. TABS
 # =====================================================
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Giám sát bãi đỗ xe",
-    "📈 Báo cáo và so sánh mô hình",
-    "📹 Camera 5 giây & xác nhận nhãn",
-    "🛠️ MLOps Control Center",
+tab3, tab1, tab4, tab2 = st.tabs([
+    "📹 Camera mô phỏng",
+    "🅿️ Thử nhận diện",
+    "🔁 Huấn luyện & theo dõi",
+    "📊 Kết quả mô hình",
 ])
 
 
@@ -374,6 +314,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
 
     st.subheader("📷 Hình ảnh bãi đỗ xe")
+    st.caption("Tải ảnh PKLot để xem dự đoán. Màu xanh là ô trống, màu đỏ là ô có xe.")
 
     uploaded_file = st.file_uploader(
         "Tải ảnh bãi đỗ xe để suy luận",
@@ -567,12 +508,9 @@ with tab2:
     st.subheader(
         "📊 So sánh các mô hình Deep Learning"
     )
+    st.caption("So sánh MobileNetV3, ResNet18 và Custom CNN bằng thông tin có trong project.")
 
-    st.info(
-        "Các chỉ số Accuracy, Precision, Recall và F1 "
-        "cần lấy từ kết quả đánh giá thực tế. "
-        "Không sử dụng số liệu ước lượng."
-    )
+    st.caption("Các chỉ số đánh giá phải lấy từ MLflow/Evaluation Gate, không ước lượng.")
 
     # Thong tin kich thuoc checkpoint local
     model_rows = []

@@ -1,3 +1,4 @@
+# SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """MLOps monitoring and protected local Stage 7 TEST_ONLY control.
 
 Sources: MLflow Registry/Tracking (live), public GitHub Actions API (live),
@@ -45,15 +46,13 @@ def _local_batches(root):
                 continue
             counts = data.get("class_counts") or {}
             rows.append({
-                "Batch": data.get("batch_name", "—"),
-                "Batch ID": file.stem,
+                "Thời điểm ghi nhận": datetime.fromtimestamp(file.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
                 "Frames": data.get("frames"),
                 "Crops": data.get("crops"),
                 "Empty": counts.get("Empty"),
                 "Occupied": counts.get("Occupied"),
                 "Excluded IDs": ", ".join(map(str, data.get("excluded_source_image_ids") or [])) or "—",
                 "Mode": "TEST_ONLY",
-                "DVC pointer": data.get("confirmed_pointer", "—"),
             })
         except (OSError, ValueError, TypeError):
             continue
@@ -138,94 +137,105 @@ def _metric_details(metrics):
 
 
 def render_mlops_monitoring(root: Path, api_health=None):
-    st.subheader("🛠️ MLOps Monitoring")
+    st.subheader("🔁 Huấn luyện lại và kết quả")
     st.caption(
-        "Chỉ đọc dữ liệu thực tế từ MLflow, GitHub Actions và batch marker DVC trên máy. "
+        "Chỉ đọc kết quả thực tế từ MLflow, GitHub Actions và dữ liệu đã lưu trên máy. "
         "Các phiên PKLot train là mô phỏng TEST_ONLY, không phải camera ngoài thực tế."
     )
-    if st.button("🔄 Làm mới dữ liệu MLOps", key="mlops_refresh"):
-        _github_runs.clear()
-        _mlflow_snapshot.clear()
-        st.rerun()
-
-    st.markdown("#### Model Registry & MLflow Tracking")
-    uri = os.environ.get("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI).rstrip("/")
-    if uri.startswith("http://") and not uri.startswith("http://localhost") and not uri.startswith("http://127.0.0.1"):
-        st.error("MLflow URI qua mạng phải dùng HTTPS.")
-        return
-
-    try:
-        registry = _mlflow_snapshot(uri)
-    except ImportError:
-        st.warning("Chưa cài MLflow trong môi trường Streamlit: `pip install mlflow`.")
-        registry = None
-    except Exception as err:
-        st.warning("Chưa lấy được Registry MLflow. Kiểm tra kết nối và biến môi trường MLFLOW_TRACKING_*. ")
-        with st.expander("Chi tiết kết nối MLflow"):
-            st.code(f"{type(err).__name__}: {str(err)[:300]}")
-        registry = None
-
-    if registry is not None:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Production alias", "v" + registry["production"] if registry["production"] else "Chưa xác minh")
-        c2.metric("Phiên bản Registry mới nhất", "v" + registry["latest"] if registry["latest"] else "—")
-        c3.metric("Số phiên bản đang hiển thị", len(registry["versions"]))
-        if api_health:
-            st.caption(
-                "FastAPI hiện báo: "
-                f"source={api_health.get('model_source', 'Unknown')} · "
-                f"version={api_health.get('model_version', 'Unknown')} · "
-                f"alias={api_health.get('registry_alias', 'Unknown')}"
-            )
-        if registry["versions"]:
-            versions = registry["versions"]
-            st.dataframe(pd.DataFrame([{
-                "Version": v["Version"], "Vai trò": v["Vai trò"],
-                "Run ID": v["Run ID"], "Trạng thái": v["Trạng thái registry"]
-            } for v in versions]), hide_index=True, width="stretch")
-            selected = st.selectbox(
-                "Xem metrics và lineage của phiên bản",
-                [v["Version"] for v in versions],
-                key="mlops_version"
-            )
-            v = next(x for x in versions if x["Version"] == selected)
-            if v["Metrics"]:
-                st.dataframe(_metric_details(v["Metrics"]), hide_index=True, width="stretch")
-            else:
-                st.info("Không có metrics đọc được cho phiên bản này.")
-            if v["Datasets"]:
-                st.write("Datasets ghi nhận trong MLflow Run:")
-                st.dataframe(pd.DataFrame(v["Datasets"]), hide_index=True, width="stretch")
-            else:
-                st.caption("Chưa lấy được lineage dataset từ MLflow Run này.")
-            if v["Run ID"] != "—" and v["Experiment ID"] is not None:
-                st.link_button(
-                    "Mở MLflow Run",
-                    f"https://dagshub.com/{REPOSITORY}.mlflow/#/experiments/{v['Experiment ID']}/runs/{v['Run ID']}",
-                )
-        st.link_button("Mở DagsHub MLflow", f"https://dagshub.com/{REPOSITORY}.mlflow")
-
-    st.divider()
-    st.markdown("#### Stage 7 — Batch history & DVC")
-    markers = _local_batches(Path(root))
-    if markers:
-        st.dataframe(pd.DataFrame(markers), hide_index=True, width="stretch")
-        st.caption("Chỉ số liệu trong marker đã ghi nhận; không đồng nghĩa đã deploy Production.")
-    else:
-        st.info("Chưa tìm thấy batch marker tại `pipeline/stage7_batches/` trên máy này.")
-
-    st.divider()
-    st.markdown("#### GitHub Actions — Stage 7 TEST_ONLY")
-    try:
-        runs = _github_runs()
-        if runs:
-            st.dataframe(pd.DataFrame(runs), hide_index=True, width="stretch",
-                         column_config={"URL": st.column_config.LinkColumn("Mở run")})
-            st.caption("Danh sách các run gần đây của workflow, không suy diễn run thuộc batch nào.")
-        else:
-            st.info("Chưa có GitHub Actions run công khai.")
-    except requests.RequestException as err:
-        st.warning(f"Không đọc được GitHub Actions: {type(err).__name__}.")
-    st.link_button("Mở GitHub Actions", f"{GITHUB}/actions/workflows/{WORKFLOW}")
+    # BEGIN SMART_PARKING_SIMPLE_UI_V1 — keep the workflow visible
+    st.info("Thu thập dữ liệu tại tab **Camera mô phỏng**. "
+            "Tab này để theo dõi và xem kết quả, không tự động đổi Production.")
     from stage7_control import render_stage7_control
     render_stage7_control(Path(root))
+    st.markdown("---")
+    st.markdown("**Xem kết quả trực tiếp:**")
+    st.link_button("Mở GitHub Actions", f"{GITHUB}/actions/workflows/{WORKFLOW}")
+    st.link_button("Mở MLflow Registry", f"https://dagshub.com/{REPOSITORY}.mlflow")
+    show_details = st.checkbox("Hiện thông tin kỹ thuật: MLflow, DVC, lịch sử GitHub",
+                               value=False, key="simple_mlops_details")
+    if show_details:
+        if st.button("🔄 Làm mới dữ liệu MLOps", key="mlops_refresh"):
+            _github_runs.clear()
+            _mlflow_snapshot.clear()
+            st.rerun()
+
+        st.markdown("#### Model Registry & MLflow Tracking")
+        uri = os.environ.get("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI).rstrip("/")
+        if uri.startswith("http://") and not uri.startswith("http://localhost") and not uri.startswith("http://127.0.0.1"):
+            st.error("MLflow URI qua mạng phải dùng HTTPS.")
+            return
+
+        try:
+            registry = _mlflow_snapshot(uri)
+        except ImportError:
+            st.warning("Chưa cài MLflow trong môi trường Streamlit: `pip install mlflow`.")
+            registry = None
+        except Exception as err:
+            st.warning("Chưa lấy được Registry MLflow. Kiểm tra kết nối và biến môi trường MLFLOW_TRACKING_*. ")
+            with st.expander("Chi tiết kết nối MLflow"):
+                st.code(f"{type(err).__name__}: {str(err)[:300]}")
+            registry = None
+
+        if registry is not None:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Production alias", "v" + registry["production"] if registry["production"] else "Chưa xác minh")
+            c2.metric("Phiên bản Registry mới nhất", "v" + registry["latest"] if registry["latest"] else "—")
+            c3.metric("Số phiên bản đang hiển thị", len(registry["versions"]))
+            if api_health:
+                st.caption(
+                    "FastAPI hiện báo: "
+                    f"source={api_health.get('model_source', 'Unknown')} · "
+                    f"version={api_health.get('model_version', 'Unknown')} · "
+                    f"alias={api_health.get('registry_alias', 'Unknown')}"
+                )
+            if registry["versions"]:
+                versions = registry["versions"]
+                st.dataframe(pd.DataFrame([{
+                    "Version": v["Version"], "Vai trò": v["Vai trò"],
+                    "Run ID": v["Run ID"], "Trạng thái": v["Trạng thái registry"]
+                } for v in versions]), hide_index=True, width="stretch")
+                selected = st.selectbox(
+                    "Xem metrics và lineage của phiên bản",
+                    [v["Version"] for v in versions],
+                    key="mlops_version"
+                )
+                v = next(x for x in versions if x["Version"] == selected)
+                if v["Metrics"]:
+                    st.dataframe(_metric_details(v["Metrics"]), hide_index=True, width="stretch")
+                else:
+                    st.info("Không có metrics đọc được cho phiên bản này.")
+                if v["Datasets"]:
+                    st.write("Datasets ghi nhận trong MLflow Run:")
+                    st.dataframe(pd.DataFrame(v["Datasets"]), hide_index=True, width="stretch")
+                else:
+                    st.caption("Chưa lấy được lineage dataset từ MLflow Run này.")
+                if v["Run ID"] != "—" and v["Experiment ID"] is not None:
+                    st.link_button(
+                        "Mở MLflow Run",
+                        f"https://dagshub.com/{REPOSITORY}.mlflow/#/experiments/{v['Experiment ID']}/runs/{v['Run ID']}",
+                    )
+            st.link_button("Mở DagsHub MLflow", f"https://dagshub.com/{REPOSITORY}.mlflow")
+
+        st.divider()
+        st.markdown("#### Dữ liệu đã thu thập")
+        markers = _local_batches(Path(root))
+        if markers:
+            st.dataframe(pd.DataFrame(markers), hide_index=True, width="stretch")
+            st.caption("Chỉ số liệu trong marker đã ghi nhận; không đồng nghĩa đã deploy Production.")
+        else:
+            st.info("Chưa tìm thấy batch marker tại `pipeline/stage7_batches/` trên máy này.")
+
+        st.divider()
+        st.markdown("#### GitHub Actions — Stage 7 TEST_ONLY")
+        try:
+            runs = _github_runs()
+            if runs:
+                st.dataframe(pd.DataFrame(runs), hide_index=True, width="stretch",
+                             column_config={"URL": st.column_config.LinkColumn("Mở run")})
+                st.caption("Danh sách các lần chạy gần đây; mỗi kết quả cần được đối chiếu trước khi kết luận.")
+            else:
+                st.info("Chưa có GitHub Actions run công khai.")
+        except requests.RequestException as err:
+            st.warning(f"Không đọc được GitHub Actions: {type(err).__name__}.")
+        st.link_button("Mở GitHub Actions", f"{GITHUB}/actions/workflows/{WORKFLOW}")
+    # END SMART_PARKING_SIMPLE_UI_V1

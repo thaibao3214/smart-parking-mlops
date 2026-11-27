@@ -1,3 +1,4 @@
+# SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """Unified camera simulator + read-only Stage 7 job summary (TEST_ONLY).
 
 One worker does the capture, prediction and GT verification; this page only
@@ -199,36 +200,43 @@ def _snapshot(root: Path, batch: str, completed: int) -> None:
         if str(record.get('image_id')) != str(item['image_id']):
             return
         image = _annotate(_render_image(sim, record), record['predictions'])
-        st.image(image, caption=f"{batch} · frame {completed}/{len(frames)} · {item['file_name']}",
+        st.image(image, caption=f"Ảnh đã xử lý: {completed}/{len(frames)}",
                  width='stretch')
     except (OSError, ValueError, KeyError, TypeError, IndexError):
-        st.caption('Chưa tải được ảnh của frame gần nhất.')
+        st.caption('Chưa tải được ảnh gần nhất.')
+
+
+def _safe_ui_status(value) -> str:
+    """Mask internal batch sequence identifiers in non-technical status messages."""
+    message = str(value)
+    message = re.sub(r"(?i)\bbatch[_ -]?\d+\b", "dữ liệu", message)
+    message = re.sub(r"(?i)\bđợt dữ liệu\s+\d+\b", "đợt dữ liệu", message)
+    message = re.sub(r"(?i)\bstage\s*\d+\b", "quy trình huấn luyện", message)
+    return message
 
 
 def _job_overview(root: Path, batch: str, data: dict, *, include_frame: bool) -> None:
     state = str(data.get('state', 'not_started'))
     done = max(0, min(20, int(data.get('completed_frames') or 0)))
     a, b, c = st.columns(3)
-    a.metric('Frame', f'{done}/20')
-    b.metric('Crops GT', str(data.get('completed_crops', 0)))
+    a.metric('Ảnh đã xử lý', f'{done}/20')
+    b.metric('Ô đỗ đã xác minh', str(data.get('completed_crops', 0)))
     c.metric('Tiến độ', STATE_LABELS.get(state, state))
     st.progress(done / 20)
     if data.get('message'):
-        st.caption(str(data['message'])[:300])
+        st.caption(_safe_ui_status(data['message'])[:300])
     if state == 'failed':
-        st.error(str(data.get('error', 'Lỗi chưa rõ'))[:700])
+        st.error(_safe_ui_status(data.get('error', 'Lỗi chưa rõ'))[:700])
     elif state == 'submitted':
-        st.success(f'{batch} đã gửi dữ liệu. Xem GitHub Actions tại MLOps Control Center.')
+        st.success('Đã gửi dữ liệu. Xem kết quả ở mục Huấn luyện lại.')
     elif state in ACTIVE_STATES:
         st.info('Đang xử lý tự động trên tiến trình nền.')
-    if data.get('batch_id'):
-        st.caption('Batch ID: ' + str(data['batch_id']))
     if include_frame:
         _snapshot(root, batch, done)
 
 
 def render_camera_pipeline(root: Path, api_url: str) -> None:
-    st.markdown('#### Thu thập dữ liệu mô phỏng → Continuous Training')
+    st.markdown('#### Camera mô phỏng và thu thập dữ liệu')
     st.caption('Phát lại ảnh PKLot TRAIN (không phải camera thực). Worker thực hiện '
                '5 giây/frame → FastAPI → xác minh COCO Ground Truth → DVC → GitHub Actions. '
                'Không tự thay đổi Production.')
@@ -236,14 +244,13 @@ def render_camera_pipeline(root: Path, api_url: str) -> None:
     @st.fragment(run_every='5s')
     def live_progress():
         batch, record = latest_status()
-        st.markdown(f'**Batch gần nhất: {batch}**')
+        st.markdown('**Lần thu thập gần nhất**')
         _job_overview(root, batch, record, include_frame=True)
 
     live_progress()
     next_name = next_batch(root)
-    st.caption(f'Batch kế tiếp nếu muốn thử lại pipeline: **{next_name}**. '
-               'Batch 005 đã chạy xong được giữ nguyên.')
-    with st.expander('Khởi động một batch mới (có gửi DVC/GitHub)', expanded=False):
+    st.caption('Có thể bắt đầu thu thập dữ liệu mới khi cần. Kết quả huấn luyện trước vẫn được giữ nguyên.')
+    with st.expander('Bắt đầu thu thập dữ liệu mới', expanded=False):
         expected = os.environ.get('MLOPS_CONTROL_PASSWORD', '')
         if len(expected) < 12:
             st.warning('Thiếu biến MLOPS_CONTROL_PASSWORD trong tiến trình Streamlit.')
@@ -253,28 +260,28 @@ def render_camera_pipeline(root: Path, api_url: str) -> None:
         ack = st.checkbox('Tôi xác nhận đây là mô phỏng PKLot TRAIN và đồng ý '
                           'gửi dữ liệu TEST ONLY lên GitHub/DVC khi đủ 20 frame hợp lệ.',
                           key='cam_auto_ack')
-        reviewed = st.checkbox('Đã xem kết quả Evaluation Gate của batch trước; '
+        reviewed = st.checkbox('Đã xem kết quả đánh giá của lần huấn luyện trước; '
                                'chấp nhận tạo một batch khác, không tự thay Production.',
                                key='cam_auto_reviewed')
         disabled = (not authorized or not ack or not reviewed or GLOBAL_LOCK.exists()
                     or (STATUS_DIR / 'active.lock').exists())
-        if st.button(f'▶ Thu thập 20 frame và chạy {next_name}',
+        if st.button('▶ Bắt đầu thu thập dữ liệu và huấn luyện lại',
                      type='primary', disabled=disabled, key='cam_auto_start_next'):
             try:
                 batch, pid = start_next(root, api_url)
-                st.success(f'Đã khởi động {batch} (PID {pid}). Theo dõi ở đây; không bấm lại.')
+                st.success('Đã bắt đầu thu thập. Theo dõi tiến độ tại đây; không bấm lại.')
                 st.rerun()
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-                st.error(str(exc)[:800])
+                st.error(_safe_ui_status(exc)[:800])
         if not authorized:
             st.caption('Nhập đúng mật khẩu để bật nút chạy. Không nhập GitHub Token tại đây.')
 
 
 def render_pipeline_summary(root: Path) -> None:
     """Read-only overview; starting capture belongs to the Camera tab."""
-    st.markdown('##### Dữ liệu Online mô phỏng — tiến độ thu thập')
+    st.markdown('##### Tiến độ thu thập dữ liệu')
     batch, record = latest_status()
-    st.caption(f'Luồng phát và thu thập bắt đầu tại tab Camera. Hiện xem: {batch}.')
+    st.caption('Dữ liệu được thu thập từ mục Camera mô phỏng.')
     _job_overview(root, batch, record, include_frame=False)
     st.link_button('Mở GitHub Actions',
                    'https://github.com/thaibao3214/smart-parking-mlops/actions')
