@@ -1,3 +1,4 @@
+# SMART_PARKING_FRIENDLY_SIMULATION_LABELS_V1
 # SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """MLOps monitoring and protected local Stage 7 TEST_ONLY control.
 
@@ -52,7 +53,7 @@ def _local_batches(root):
                 "Empty": counts.get("Empty"),
                 "Occupied": counts.get("Occupied"),
                 "Excluded IDs": ", ".join(map(str, data.get("excluded_source_image_ids") or [])) or "—",
-                "Mode": "TEST_ONLY",
+                "Mode": "Mô phỏng (không triển khai)",
             })
         except (OSError, ValueError, TypeError):
             continue
@@ -140,7 +141,7 @@ def render_mlops_monitoring(root: Path, api_health=None):
     st.subheader("🔁 Huấn luyện lại và kết quả")
     st.caption(
         "Chỉ đọc kết quả thực tế từ MLflow, GitHub Actions và dữ liệu đã lưu trên máy. "
-        "Các phiên PKLot train là mô phỏng TEST_ONLY, không phải camera ngoài thực tế."
+        "Dữ liệu được phát lại từ PKLot để mô phỏng camera, không phải dữ liệu thu trực tiếp."
     )
     # BEGIN SMART_PARKING_SIMPLE_UI_V1 — keep the workflow visible
     st.info("Thu thập dữ liệu tại tab **Camera mô phỏng**. "
@@ -226,7 +227,7 @@ def render_mlops_monitoring(root: Path, api_health=None):
             st.info("Chưa tìm thấy batch marker tại `pipeline/stage7_batches/` trên máy này.")
 
         st.divider()
-        st.markdown("#### GitHub Actions — Stage 7 TEST_ONLY")
+        st.markdown("#### Lịch sử chạy huấn luyện thử nghiệm trên GitHub")
         try:
             runs = _github_runs()
             if runs:

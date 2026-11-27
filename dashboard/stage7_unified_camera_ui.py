@@ -1,3 +1,4 @@
+# SMART_PARKING_FRIENDLY_SIMULATION_LABELS_V1
 # SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """Unified camera simulator + read-only Stage 7 job summary (TEST_ONLY).
 
@@ -258,7 +259,7 @@ def render_camera_pipeline(root: Path, api_url: str) -> None:
         pwd = st.text_input('Mật khẩu điều khiển', type='password', key='cam_auto_pwd')
         authorized = bool(pwd) and hmac.compare_digest(pwd.encode(), expected.encode())
         ack = st.checkbox('Tôi xác nhận đây là mô phỏng PKLot TRAIN và đồng ý '
-                          'gửi dữ liệu TEST ONLY lên GitHub/DVC khi đủ 20 frame hợp lệ.',
+                          'gửi dữ liệu mô phỏng lên GitHub/DVC để huấn luyện thử nghiệm khi đủ 20 ảnh hợp lệ.',
                           key='cam_auto_ack')
         reviewed = st.checkbox('Đã xem kết quả đánh giá của lần huấn luyện trước; '
                                'chấp nhận tạo một batch khác, không tự thay Production.',

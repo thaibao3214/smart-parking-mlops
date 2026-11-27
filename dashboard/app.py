@@ -1,3 +1,4 @@
+# SMART_PARKING_FRIENDLY_SIMULATION_LABELS_V1
 
 import os
 from pathlib import Path
@@ -246,7 +247,7 @@ with st.expander("📌 Cách sử dụng (xem nhanh)", expanded=False):
         "2. **Thử nhận diện:** tải một ảnh PKLot để xem ô trống/có xe.\n"
         "3. **Huấn luyện & theo dõi:** theo dõi GitHub Actions, DVC, MLflow và Gate.\n"
         "4. **Kết quả mô hình:** xem so sánh và biểu đồ huấn luyện.\n\n"
-        "**TEST ONLY:** không tự động thay đổi model Production."
+        "**Chế độ mô phỏng:** chỉ đánh giá và huấn luyện thử nghiệm, không tự thay đổi mô hình đang sử dụng."
     )
 # END SMART_PARKING_SIMPLE_UI_V1
 

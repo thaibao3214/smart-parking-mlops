@@ -1,3 +1,4 @@
+# SMART_PARKING_FRIENDLY_SIMULATION_LABELS_V1
 # SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """Camera simulation UI embedded in dashboard/app.py.
 
@@ -193,7 +194,7 @@ def available_sources():
 def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv3'):
     """Render one tab of the main Streamlit dashboard (no set_page_config here)."""
     st.subheader('📹 Camera mô phỏng — nhận diện mỗi 5 giây')
-    st.caption('PKLot train/test là dữ liệu mô phỏng TEST_ONLY; không phải camera mới ngoài thực tế.')
+    st.caption('Ảnh PKLot được phát lại để mô phỏng camera, không phải ảnh mới từ camera thực tế.')
     from stage7_unified_camera_ui import render_camera_pipeline
     render_camera_pipeline(ROOT, api_url)
     st.divider()
@@ -204,7 +205,8 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
         return
     st.markdown('#### Phát lại và duyệt nhãn thủ công')
     sources = available_sources()
-    choice = st.selectbox('Nguồn luồng camera', list(sources), key='cam_source')
+    choice = st.selectbox('Nguồn luồng camera', list(sources), key='cam_source',
+                          format_func=lambda name: name.replace('TEST_ONLY', 'mô phỏng'))
     source = sources[choice]
     stream = source['stream']
     confirmed = source['confirmed']
@@ -226,7 +228,7 @@ def render_online_stream(api_url='http://127.0.0.1:8000', model_type='mobilenetv
             or manifest.get('source_split') != 'data/train'
             or manifest.get('test_only') is not True
         ):
-            raise ValueError('Manifest PKLot train không đúng nguồn hoặc chưa đánh dấu TEST_ONLY')
+            raise ValueError('Dữ liệu PKLot train không đúng nguồn hoặc thiếu xác nhận chế độ mô phỏng')
     except (ValueError, KeyError, TypeError) as exc:
         st.error(f'Manifest không hợp lệ: {exc}')
         return

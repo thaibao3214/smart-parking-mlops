@@ -1,3 +1,4 @@
+# SMART_PARKING_FRIENDLY_SIMULATION_LABELS_V1
 # SMART_PARKING_HIDE_BATCH_ORDINALS_V1
 """Password-gated, local-only Streamlit controller for Stage 7 TEST_ONLY batches."""
 import hmac
@@ -165,7 +166,7 @@ def launch_worker(root: Path, batch: str, mode: str, batch_id: str = ''):
 def render_stage7_control(root: Path):
     st.divider()
     st.markdown('#### Theo dõi và quản lý huấn luyện lại')
-    st.caption('Chỉ điều khiển TEST_ONLY. Nút này chạy pipeline thật trên máy đang chạy Streamlit; '
+    st.caption('Chế độ mô phỏng: nút này chạy quy trình xử lý trên máy đang chạy Streamlit; '
                'sau khi push marker, GitHub Actions mới thực hiện retraining trên Kaggle GPU. '
                'Không tự chuyển model sang Production.')
     if not (root / 'pipeline' / 'stage7_auto_trigger.py').is_file():
@@ -207,7 +208,7 @@ def render_stage7_control(root: Path):
                 st.session_state['stage7_checked'] = data
                 previous = data
                 if data.get('already_submitted'):
-                    st.info('ALREADY SUBMITTED — Dữ liệu đã gửi và kiểm tra PASS. Có thể chọn chạy lại TEST ONLY có chủ đích bên dưới.')
+                    st.info('Dữ liệu đã gửi và được kiểm tra. Có thể chủ động chạy lại quy trình thử nghiệm bên dưới.')
                 else:
                     st.success('Dữ liệu hợp lệ — kiểm tra thành công')
             except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
@@ -228,7 +229,7 @@ def render_stage7_control(root: Path):
                     st.warning('Thiếu GH_TOKEN trong môi trường Streamlit. Cần token GitHub có quyền Actions: write '
                                'và Contents: read cho repository để điều khiển workflow từ đây.')
                 acknowledge_rerun = st.checkbox(
-                    'Tôi đồng ý chạy LẠI TEST ONLY trên Kaggle GPU cho batch đã gửi; '
+                    'Tôi đồng ý chạy lại huấn luyện thử nghiệm trên Kaggle GPU cho dữ liệu đã gửi; '
                     'không thay đổi Production.', key='stage7_dispatch_ack')
                 if st.button('🚀 Chạy retraining trên GitHub từ Streamlit', type='primary',
                              disabled=not acknowledge_rerun or not os.environ.get('GH_TOKEN', '').strip(),
@@ -245,7 +246,7 @@ def render_stage7_control(root: Path):
             elif (job_dir() / 'active.lock').exists():
                 st.warning('Đang có một phiên kích hoạt Stage 7 khác. Xem trạng thái bên dưới.')
             else:
-                acknowledge = st.checkbox('Tôi đã kiểm tra nhãn/bounding box và đồng ý gửi batch TEST_ONLY lên DVC/GitHub.',
+                acknowledge = st.checkbox('Tôi đã kiểm tra nhãn và vùng ô đỗ, đồng ý gửi dữ liệu mô phỏng lên DVC/GitHub để huấn luyện thử nghiệm.',
                                           key='stage7_ack')
                 if st.button('🚀 Bắt đầu retraining', type='primary', disabled=not acknowledge, key='stage7_launch'):
                     # Recheck immutable batch and metadata directly before submitting.
@@ -325,7 +326,7 @@ def render_stage7_control(root: Path):
                 if run.get('url'):
                     st.link_button('Mở đúng GitHub run', run['url'])
                 st.info('Workflow success là thành công kỹ thuật; các model vẫn có thể Gate FAIL. '
-                        'TEST ONLY không tự promotion sang Production.')
+                        'Quy trình thử nghiệm không tự thay đổi mô hình đang sử dụng.')
                 if run.get('status') == 'completed':
                     st.caption('Chỉ tải artifact REPORT nhỏ (không tải checkpoint). Run cũ chưa có REPORT: xem GitHub Actions → Summary.')
                     if st.button('📊 Lấy kết quả Evaluation Gate', key='stage7_fetch_metrics'):
@@ -352,6 +353,6 @@ def render_stage7_control(root: Path):
                                 st.json(metrics['report'])
                         st.caption('Gate FAIL nghĩa là candidate chưa đạt điều kiện; '
                                    'workflow SUCCESS nghĩa là pipeline chạy thành công. '
-                                   'Không promotion Production trong TEST ONLY.')
+                                   'Không tự thay đổi mô hình đang sử dụng trong chế độ mô phỏng.')
     st.caption('“submitted” xác nhận push marker; “dispatched” xác nhận GitHub nhận yêu cầu, không phải Kaggle/MLflow đã hoàn tất. '
                'Theo dõi các bước tiếp theo ở bảng GitHub Actions và MLflow phía trên.')
