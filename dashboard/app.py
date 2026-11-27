@@ -1,3 +1,4 @@
+# SMART_PARKING_FINAL_POLISH_V1
 # SMART_PARKING_FRIENDLY_SIMULATION_LABELS_V1
 
 import os
@@ -279,10 +280,11 @@ with st.sidebar:
 
     if health_data:
         st.success("FastAPI đang hoạt động")
+        # SMART_PARKING_FINAL_POLISH_V1: Production is not the QA selection.
         st.caption(
-            "Model đang phục vụ: phiên bản "
+            "MobileNetV3 chính thức: phiên bản "
             + str(health_data.get("model_version", "?"))
-            + " · alias " + str(health_data.get("registry_alias", "?"))
+            + " · không thay đổi khi dùng thử"
         )
         if health_data.get("model_source") != "DagsHub Registry":
             st.warning("FastAPI đang dùng model local/fallback.")
@@ -381,13 +383,17 @@ with tab1:
                 "**Kích thước xử lý:** 640 × 640"
             )
 
+            # SMART_PARKING_FINAL_POLISH_V1: distinguish request from Production status.
             if health_data:
                 st.write(
-                    "**Phiên bản mô hình đang phục vụ:**",
-                    health_data.get(
-                        "model_version", "Unknown"
-                    )
+                    "**MobileNetV3 chính thức:**",
+                    "Phiên bản " + str(health_data.get("model_version", "?")),
                 )
+            st.write(
+                "**Chế độ nhận diện đã chọn:**",
+                "Mô hình mới (dùng thử)" if qa_variant == "qa_preview"
+                else "Mô hình chính thức",
+            )
 
         if st.button(
             "🚀 Chạy suy luận AI",
@@ -491,6 +497,11 @@ with tab1:
             mc3.metric(
                 "Nguồn model",
                 result.get("model_source", "Unknown")
+            )
+            # SMART_PARKING_FINAL_POLISH_V1: actual model provenance comes from API.
+            st.caption(
+                "Tên, phiên bản và nguồn phía trên do FastAPI trả về cho lần nhận diện này. "
+                "Chọn dùng thử không đổi mô hình chính thức."
             )
 
             with st.expander(
