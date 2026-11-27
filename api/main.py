@@ -18,6 +18,9 @@ from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import dagshub
 import mlflow
 from mlflow.tracking import MlflowClient
+# BEGIN SMART_PARKING_QA_PREVIEW_V2
+from api.qa_preview import find_qa_version, load_qa_model
+# END SMART_PARKING_QA_PREVIEW_V2
 
 
 # ==========================================
@@ -382,13 +385,49 @@ def reload_model():
 # ==========================================
 # 7. PREDICT
 # ==========================================
+# BEGIN SMART_PARKING_QA_PREVIEW_V2: metadata endpoint is read-only
+@app.get("/qa-model-info")
+def qa_model_info():
+    try:
+        row = find_qa_version(manager, MODEL_NAME)
+        # BEGIN SMART_PARKING_CONFIDENCE_AND_QA_REVIEW_V1
+        # Fetch recorded validation metrics from this exact QA model run.
+        metrics = {}
+        if getattr(row, "run_id", None):
+            try:
+                record = manager.client.get_run(row.run_id)
+                metrics = record.data.metrics or {}
+            except Exception:
+                pass  # Missing metrics must not be reported as zero.
+        def checked_score(key):
+            value = metrics.get(key)
+            if isinstance(value, (int, float)) and 0 <= value <= 1:
+                return float(value)
+            return None
+        # END SMART_PARKING_CONFIDENCE_AND_QA_REVIEW_V1
+        return {"available": True, "model_name": MODEL_NAME,
+                "version": str(row.version),
+                "review_status": "QA_ONLY", "test_only": True,
+                "github_run_id": "45903240562",
+                "candidate_macro_f1": checked_score("candidate_macro_f1"),
+                "candidate_accuracy": checked_score("candidate_accuracy")}
+    except Exception:
+        return {"available": False,
+                "message": "Chưa xác minh được mô hình mới trên Registry"}
+# END SMART_PARKING_QA_PREVIEW_V2
+
 @app.post("/predict")
 async def predict_parking(
     model_type: str = Form("mobilenetv3"),
+    model_variant: str = Form("production"),
     file: UploadFile = File(...),
 ):
     if model_type not in PATH_MAP:
         raise HTTPException(status_code=400, detail="Invalid model type")
+    if model_variant not in ("production", "qa_preview"):
+        raise HTTPException(status_code=400, detail="Invalid model variant")
+    if model_variant == "qa_preview" and model_type != "mobilenetv3":
+        raise HTTPException(status_code=400, detail="QA preview supports MobileNetV3 only")
 
     image_name = Path(file.filename or "").name
     if not image_name:
@@ -409,8 +448,14 @@ async def predict_parking(
     annotation = resolve_image_annotations(image_name, image_bytes)
 
     try:
-        model, version, source = manager.get_model(model_type)
+        if model_variant == "qa_preview":
+            model, version, source = load_qa_model(manager, mlflow, torch, MODEL_NAME)
+        else:
+            model, version, source = manager.get_model(model_type)
     except Exception as exc:
+        if model_variant == "qa_preview":
+            raise HTTPException(status_code=503,
+                detail="Không tải được mô hình vừa huấn luyện từ DagsHub Registry") from exc
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     valid_boxes = []
@@ -440,20 +485,27 @@ async def predict_parking(
             batch = torch.stack(tensors[start:start + BATCH_SIZE]).to(DEVICE)
             outputs = model(batch)
             labels = outputs.argmax(dim=1).tolist()
-            for box_info, label in zip(
-                valid_boxes[start:start + BATCH_SIZE], labels
+            probabilities = torch.softmax(outputs, dim=1).tolist()
+            for box_info, label, class_probs in zip(
+                valid_boxes[start:start + BATCH_SIZE], labels, probabilities
             ):
                 status = "Occupied" if label == 1 else "Empty"
                 if label == 1:
                     count_occupied += 1
                 else:
                     count_empty += 1
-                predictions.append({**box_info, "status": status})
+                predictions.append({
+                    **box_info, "status": status,
+                    "confidence_percent": round(float(class_probs[label]) * 100, 2),
+                })
 
     total = count_empty + count_occupied
     rate = 100 * count_occupied / total if total else 0
+    mean_confidence = (round(sum(p["confidence_percent"] for p in predictions) / total, 2)
+                       if total else None)
     return {
         "model_used": model_type,
+        "model_variant": model_variant,
         "model_version": version,
         "model_source": source,
         "image_name": image_name,
@@ -462,5 +514,6 @@ async def predict_parking(
         "occupied_spaces": count_occupied,
         "empty_spaces": count_empty,
         "occupancy_rate": round(rate, 2),
+        "mean_confidence_percent": mean_confidence,
         "predictions": predictions,
     }

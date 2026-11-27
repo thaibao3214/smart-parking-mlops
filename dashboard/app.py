@@ -9,6 +9,9 @@ import requests
 import pandas as pd
 
 from PIL import Image, ImageDraw, ImageFont
+# BEGIN SMART_PARKING_QA_PREVIEW_V2
+from qa_preview_ui import render_qa_selector
+# END SMART_PARKING_QA_PREVIEW_V2
 
 
 # =====================================================
@@ -87,7 +90,8 @@ def call_predict_api(
     api_base_url,
     filename,
     image_bytes,
-    model_type
+    model_type,
+    model_variant="production"
 ):
     files = {
         "file": (
@@ -98,7 +102,8 @@ def call_predict_api(
     }
 
     data = {
-        "model_type": model_type
+        "model_type": model_type,
+        "model_variant": model_variant
     }
 
     response = requests.post(
@@ -317,6 +322,10 @@ with tab1:
     st.subheader("📷 Hình ảnh bãi đỗ xe")
     st.caption("Tải ảnh PKLot để xem dự đoán. Màu xanh là ô trống, màu đỏ là ô có xe.")
 
+    # BEGIN SMART_PARKING_QA_PREVIEW_V2: user-visible model selection for uploaded images only
+    qa_variant = render_qa_selector(api_base_url, model_type)
+    # END SMART_PARKING_QA_PREVIEW_V2
+
     uploaded_file = st.file_uploader(
         "Tải ảnh bãi đỗ xe để suy luận",
         type=["jpg", "jpeg", "png"],
@@ -346,6 +355,7 @@ with tab1:
         current_key = (
             image_hash,
             model_type,
+            qa_variant,
             api_base_url
         )
 
@@ -373,7 +383,7 @@ with tab1:
 
             if health_data:
                 st.write(
-                    "**Registry Version:**",
+                    "**Phiên bản mô hình đang phục vụ:**",
                     health_data.get(
                         "model_version", "Unknown"
                     )
@@ -394,7 +404,8 @@ with tab1:
                         api_base_url,
                         filename,
                         image_bytes,
-                        model_type
+                        model_type,
+                        qa_variant
                     )
 
                     annotated_image = draw_predictions(
@@ -427,6 +438,13 @@ with tab1:
             empty, occupied = show_prediction_metrics(
                 result
             )
+            # BEGIN SMART_PARKING_CONFIDENCE_AND_QA_REVIEW_V1
+            confidence = result.get("mean_confidence_percent")
+            if isinstance(confidence, (int, float)) and 0 <= confidence <= 100:
+                st.metric("Độ tin cậy dự đoán trung bình", f"{confidence:.2f}%")
+                st.caption("Trung bình softmax trên các ô đỗ của ảnh này. "
+                           "Đây không phải độ chính xác kiểm chứng; xác suất chưa được hiệu chuẩn.")
+            # END SMART_PARKING_CONFIDENCE_AND_QA_REVIEW_V1
 
             result_col1, result_col2 = st.columns(
                 [2, 1]
@@ -648,4 +666,8 @@ with tab3:
 with tab4:
     from mlops_monitoring import render_mlops_monitoring
 
+    # BEGIN SMART_PARKING_CONFIDENCE_AND_QA_REVIEW_V1
+    from model_review_ui import render_model_review
+    render_model_review(api_base_url)
+    # END SMART_PARKING_CONFIDENCE_AND_QA_REVIEW_V1
     render_mlops_monitoring(root=BASE_DIR, api_health=health_data)
